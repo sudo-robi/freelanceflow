@@ -62,7 +62,14 @@ The configured network, endpoints, and passphrase are defined in the application
 
 ## Soroban contract
 
-No contract ID or deployment transaction is claimed. See [SMART_CONTRACT_REVIEW.md](SMART_CONTRACT_REVIEW.md) for tested behavior and deployment limits.
+The escrow contract is deployed and verified on the configured network:
+
+- Contract ID: `CA5FBQ4VEJ4ZXGVDVMAGRP6JKEB7AGUUG5ZR3NYSNG3A6XFUUVCL37CI`
+- WASM hash (local build matches on-chain): `906f98af2a1ae3bb8a816ea65bab35b130c3f4ab02d1ba40335a8ca1eb9b527a`
+- Deployment transaction: `b2f65b6fa9a948261c4861d70f3db92f52046fff86a1c89320581ea042e6f69f`
+- WASM upload transaction: `9c2d00688e0bfe2da7f928b62c0232db917d1f35cbbf53dcb6301540771e91e5`
+
+It is not yet invoked by the FastAPI payment flow; verified application payments still rely on direct Stellar transactions. See [SMART_CONTRACT_REVIEW.md](SMART_CONTRACT_REVIEW.md) for evidence and limits.
 
 ## Records
 

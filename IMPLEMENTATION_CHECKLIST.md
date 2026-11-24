@@ -40,7 +40,7 @@ Status values: `PENDING`, `IN PROGRESS`, `VERIFIED`, `BLOCKED`.
 | # | Feature | Status | Evidence |
 |---|---|---|---|
 | 23 | Stellar Testnet integration (Horizon, passphrase, source/destination/asset/amount/hash) | VERIFIED | live Horizon tx `be1f...a83e`, backend `/api/stellar/transaction` 200, Soroban RPC passphrase |
-| 24 | Soroban contract tests and documented deployment limits | VERIFIED | `cargo test` 8 passed; SMART_CONTRACT_REVIEW.md |
+| 24 | Soroban contract tests, build and verified deployment | VERIFIED | `cargo test` 8 passed; WASM hash `906f...b527a`; contract `CA5F...CL37CI`; deploy tx `b2f6...f69f` SUCCESS |
 | 25 | Backend unit + integration tests (success, rejected signature, failed tx, duplicates, wrong amount/network, unauthorized, revision, dispute restrictions) | VERIFIED | backend pytest 33 passed |
 | 26 | Frontend unit tests for new pages/components | VERIFIED | Vitest 41 passed |
 | 27 | End-to-end browser tests | VERIFIED | Playwright 3 passed |
