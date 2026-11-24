@@ -8,3 +8,9 @@ freelanceflow.db
 .next/
 coverage/
 target/
+.coverage
+*.tsbuildinfo
+e2e-test.db
+test-results/
+playwright-report/
+blob-report/

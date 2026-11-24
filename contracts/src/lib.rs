@@ -238,6 +238,8 @@ impl FreelanceFlowEscrow {
         if refundable > 0 {
             token::Client::new(&env, &agreement.asset).transfer(&env.current_contract_address(), &agreement.client, &refundable);
         }
+        // After refunding, no funds remain claimable under this agreement.
+        agreement.funded_amount = agreement.released_amount;
         env.storage().instance().set(&key, &agreement);
         env.events().publish((Symbol::new(&env, "cancelled"), agreement_id), refundable);
         Ok(refundable)

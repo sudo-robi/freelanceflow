@@ -9,12 +9,14 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from .auth import bearer, create_session, get_current_user, hash_password, verify_password
-from .database import Base, engine, get_db
+from .services import assert_not_disputed, audit, is_stellar_address, notify, serialize_datetime, to_float
+from .database import Base, engine, ensure_schema, get_db
 from .models import (
     AgreementMilestone,
     AuditLog,
     ClientProfile,
     FreelancerProfile,
+    Invoice,
     Notification,
     PaymentRecord,
     Project,
@@ -33,8 +35,9 @@ from .schemas import (
     SessionResponse,
 )
 from .stellar import get_testnet_account, get_transaction
+from .routers import agreements, dashboard, disputes, finance, milestones, projects, stellar
 
-app = FastAPI(title="FreelanceFlow API", version="0.1.0")
+app = FastAPI(title="FreelanceFlow API", version="0.2.0")
 cors_origins = [
     origin.strip()
     for origin in os.getenv(
@@ -64,7 +67,7 @@ async def security_headers(request, call_next):
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
+    ensure_schema()
 
 
 @app.get("/api/health")
@@ -154,6 +157,10 @@ def update_me(payload: ProfileUpdate, user: User = Depends(get_current_user), db
             profile.description = payload.description
         if payload.hourly_rate is not None:
             profile.hourly_rate = payload.hourly_rate
+        if payload.project_rate is not None:
+            profile.project_rate = payload.project_rate
+        if payload.skills is not None:
+            profile.skills = payload.skills
     else:
         profile = db.query(ClientProfile).filter(ClientProfile.user_id == user.id).first()
         if not profile:
@@ -165,24 +172,6 @@ def update_me(payload: ProfileUpdate, user: User = Depends(get_current_user), db
             profile.description = payload.description
     db.commit()
     return {"status": "updated"}
-
-
-@app.get("/api/freelancers")
-def list_freelancers(skill: str = "", db: Session = Depends(get_db)):
-    profiles = db.query(FreelancerProfile).all()
-    results = []
-    for profile in profiles:
-        user = db.get(User, profile.user_id)
-        if skill and skill.lower() not in (profile.description or "").lower() and skill.lower() not in (profile.title or "").lower():
-            continue
-        results.append({
-            "id": user.id,
-            "full_name": user.full_name,
-            "title": profile.title,
-            "description": profile.description,
-            "hourly_rate": float(profile.hourly_rate) if profile.hourly_rate is not None else None,
-        })
-    return results
 
 
 @app.post("/api/projects")
@@ -229,6 +218,14 @@ def get_project(project_id: str, user: User = Depends(get_current_user), db: Ses
         "asset": project.asset,
         "status": project.status,
         "deadline": project.deadline,
+        "client_id": project.client_id,
+        "freelancer_id": project.freelancer_id,
+        "agreement_id": (
+            agreement.id
+            if (agreement := db.query(WorkAgreement).filter(WorkAgreement.project_id == project_id).first())
+            else None
+        ),
+        "created_at": project.created_at.isoformat(),
     }
 
 
@@ -255,8 +252,10 @@ def invite_freelancer(project_id: str, payload: InvitationCreate, user: User = D
         expires_at=datetime.utcnow() + timedelta(days=7),
     )
     db.add(invitation)
+    db.flush()
     project.status = "invitation_sent"
-    db.add(Notification(user_id=freelancer.id, title="Project invitation", message=f"You were invited to {project.title}"))
+    notify(db, freelancer.id, "Project invitation", f"You were invited to {project.title}", "invitation", "project", project_id)
+    audit(db, user.id, "invitation", invitation.id, "sent", project_id)
     db.commit()
     return {"id": invitation.id, "status": invitation.status}
 
@@ -280,6 +279,8 @@ def accept_invitation(invitation_id: str, user: User = Depends(get_current_user)
     invitation.status = "accepted"
     project.freelancer_id = user.id
     project.status = "awaiting_agreement"
+    notify(db, project.client_id, "Invitation accepted", f"{user.full_name} accepted your invitation to {project.title}.", "invitation", "project", project.id)
+    audit(db, user.id, "invitation", invitation_id, "accepted", project.id)
     db.commit()
     return {"status": "accepted"}
 
@@ -321,6 +322,8 @@ def create_agreement(project_id: str, payload: AgreementCreate, user: User = Dep
             due_date=item.due_date,
         ))
     project.status = "awaiting_agreement"
+    notify(db, payload.freelancer_id, "Agreement ready", f"An agreement for {project.title} is awaiting your acceptance.", "agreement", "agreement", agreement.id)
+    audit(db, user.id, "agreement", agreement.id, "created", f"version {agreement.version}")
     db.commit()
     db.refresh(agreement)
     return {"id": agreement.id, "status": agreement.status}
@@ -337,10 +340,16 @@ def accept_agreement(agreement_id: str, user: User = Depends(get_current_user), 
         agreement.freelancer_accepted = True
     else:
         raise HTTPException(status_code=403, detail="Not authorized")
+    audit(db, user.id, "agreement", agreement_id, "accepted_by_client" if user.id == agreement.client_id else "accepted_by_freelancer")
     if agreement.client_accepted and agreement.freelancer_accepted:
         agreement.status = "active"
         project = db.get(Project, agreement.project_id)
         project.status = "active"
+        counterparty = agreement.freelancer_id if user.id == agreement.client_id else agreement.client_id
+        notify(db, counterparty, "Agreement active", f"The agreement for {project.title} is now active.", "agreement", "agreement", agreement_id)
+    else:
+        counterparty = agreement.freelancer_id if user.id == agreement.client_id else agreement.client_id
+        notify(db, counterparty, "Agreement accepted", f"{user.full_name} accepted the agreement; awaiting the other party.", "agreement", "agreement", agreement_id)
     db.commit()
     return {"status": agreement.status, "client_accepted": agreement.client_accepted, "freelancer_accepted": agreement.freelancer_accepted}
 
@@ -356,16 +365,24 @@ def submit_milestone(milestone_id: str, payload: MilestoneUpdate, user: User = D
     project = db.get(Project, agreement.project_id)
     if project.status in {"cancelled", "completed"}:
         raise HTTPException(status_code=409, detail="Project is closed")
+    assert_not_disputed(db, agreement.id, milestone.id)
     if milestone.status not in {"not_started", "in_progress", "revision_requested"}:
         raise HTTPException(status_code=409, detail="Milestone cannot accept a new submission")
     if agreement.freelancer_id != user.id:
         raise HTTPException(status_code=403, detail="Only the assigned freelancer can submit work")
     if not payload.deliverable_url:
         raise HTTPException(status_code=422, detail="A deliverable URL is required")
+    if not payload.deliverable_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=422, detail="Deliverable URL must start with http:// or https://")
     milestone.deliverable_url = payload.deliverable_url
     milestone.status = "submitted"
+    milestone.submission_count = (milestone.submission_count or 0) + 1
+    milestone.submitted_at = datetime.utcnow()
+    milestone.review_feedback = None
+    notify(db, agreement.client_id, "Work submitted", f'"{milestone.title}" was submitted for review.', "milestone", "milestone", milestone_id)
+    audit(db, user.id, "milestone", milestone_id, "submitted", f"submission {milestone.submission_count}")
     db.commit()
-    return {"status": milestone.status}
+    return {"status": milestone.status, "submission_count": milestone.submission_count}
 
 
 @app.post("/api/milestones/{milestone_id}/review")
@@ -376,31 +393,26 @@ def review_milestone(milestone_id: str, payload: MilestoneUpdate, approved: bool
     agreement = db.get(WorkAgreement, milestone.agreement_id)
     if agreement.client_id != user.id:
         raise HTTPException(status_code=403, detail="Only the client can review the milestone")
+    assert_not_disputed(db, agreement.id, milestone.id)
     if milestone.status not in {"submitted", "under_review"}:
         raise HTTPException(status_code=409, detail="Milestone is not awaiting review")
     if approved:
         milestone.status = "approved"
+        milestone.review_feedback = None
+        action = "approved"
+        title = "Milestone approved"
+        message = f'"{milestone.title}" was approved. Payment can now be initiated.'
     else:
         milestone.status = "revision_requested"
-        milestone.review_feedback = payload.feedback
+        milestone.review_feedback = payload.feedback or ""
+        action = "revision_requested"
+        title = "Revision requested"
+        message = f'"{milestone.title}" needs revision: {milestone.review_feedback}'
+    milestone.reviewed_at = datetime.utcnow()
+    notify(db, agreement.freelancer_id, title, message, "milestone", "milestone", milestone_id)
+    audit(db, user.id, "milestone", milestone_id, action, milestone.review_feedback or "")
     db.commit()
     return {"status": milestone.status}
-
-
-@app.post("/api/payments/verify")
-def verify_payment(transaction_hash: str, milestone_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    milestone = db.get(AgreementMilestone, milestone_id)
-    if not milestone:
-        raise HTTPException(status_code=404, detail="Milestone not found")
-    agreement = db.get(WorkAgreement, milestone.agreement_id)
-    if user.id not in {agreement.client_id, agreement.freelancer_id}:
-        raise HTTPException(status_code=403, detail="Not authorized")
-    if milestone.status != "approved":
-        raise HTTPException(status_code=409, detail="Milestone is not approved")
-    existing = db.query(PaymentRecord).filter(PaymentRecord.transaction_hash == transaction_hash).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="Transaction already recorded")
-    return {"status": "verification_required", "message": "Use Stellar Horizon transaction verification in the client, then confirm with /api/payments/{hash}"}
 
 
 @app.get("/api/payments/{transaction_hash}/verify")
@@ -417,7 +429,20 @@ async def verify_transaction(transaction_hash: str, user: User = Depends(get_cur
 
 
 @app.post("/api/payments/{transaction_hash}/confirm")
-async def confirm_payment(transaction_hash: str, milestone_id: str, ledger: int | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def confirm_payment(
+    transaction_hash: str,
+    milestone_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    intent_id: str | None = None,
+):
+    """Confirm a payment only after independent Stellar Testnet verification.
+
+    The client-supplied hash is a lookup key, never proof of payment. The
+    authoritative source is Horizon data fetched by this server.
+    """
+    from .models import PaymentIntent
+
     if len(transaction_hash) != 64 or any(character not in "0123456789abcdef" for character in transaction_hash.lower()):
         raise HTTPException(status_code=422, detail="Invalid Stellar transaction hash")
     milestone = db.get(AgreementMilestone, milestone_id)
@@ -429,26 +454,55 @@ async def confirm_payment(transaction_hash: str, milestone_id: str, ledger: int 
     existing = db.query(PaymentRecord).filter(PaymentRecord.transaction_hash == transaction_hash).first()
     if existing:
         if existing.milestone_id == milestone.id:
-            return {"status": "confirmed", "transaction_hash": transaction_hash, "duplicate": True}
+            invoice = db.query(Invoice).filter(Invoice.payment_id == existing.id).first()
+            return {
+                "status": "confirmed",
+                "transaction_hash": transaction_hash,
+                "duplicate": True,
+                "invoice_id": invoice.id if invoice else None,
+            }
         raise HTTPException(status_code=409, detail="Transaction already recorded")
+    assert_not_disputed(db, agreement.id, milestone.id)
+    if agreement.status != "active":
+        raise HTTPException(status_code=409, detail="Agreement is not active")
     if milestone.status != "approved":
         raise HTTPException(status_code=409, detail="Milestone is not approved")
     client = db.get(User, agreement.client_id)
     freelancer = db.get(User, agreement.freelancer_id)
-    if not client.stellar_address or not freelancer.stellar_address:
-        raise HTTPException(status_code=422, detail="Both parties must set Stellar public addresses")
+    if not is_stellar_address(client.stellar_address) or not is_stellar_address(freelancer.stellar_address):
+        raise HTTPException(status_code=422, detail="Both parties must set valid Stellar public addresses")
+
+    intent = db.get(PaymentIntent, intent_id) if intent_id else None
+    if intent_id and (not intent or intent.client_id != user.id or intent.milestone_id != milestone.id):
+        raise HTTPException(status_code=403, detail="Payment intent is not valid for this milestone")
+    if intent is None:
+        intent = db.query(PaymentIntent).filter(
+            PaymentIntent.milestone_id == milestone.id,
+            PaymentIntent.client_id == user.id,
+            PaymentIntent.status == "pending",
+        ).order_by(PaymentIntent.created_at.desc()).first()
+    if intent:
+        if intent.status != "pending" or intent.expires_at < datetime.utcnow():
+            raise HTTPException(status_code=409, detail="Payment intent is no longer valid")
+        if Decimal(str(intent.amount)) != Decimal(str(milestone.amount)):
+            raise HTTPException(status_code=422, detail="Payment intent amount does not match the milestone")
+
     try:
         transaction = await get_transaction(transaction_hash)
     except Exception as error:
         raise HTTPException(status_code=502, detail=f"Horizon verification failed: {error}") from error
     if not transaction.get("found") or not transaction.get("successful"):
         raise HTTPException(status_code=409, detail="Transaction was not found or was not successful")
+    if transaction.get("source_account") != client.stellar_address:
+        raise HTTPException(status_code=422, detail="Transaction source does not match the client address")
+    if intent and str(transaction.get("memo") or "") != intent.memo:
+        raise HTTPException(status_code=422, detail="Transaction memo does not match the payment intent")
+
     matching_payments = [
         operation for operation in transaction["operations"]
         if operation["type"] in {"payment", "path_payment_strict_send", "path_payment_strict_receive"}
         and operation.get("to") == freelancer.stellar_address
         and operation.get("from") == client.stellar_address
-        and transaction.get("source_account") == client.stellar_address
         and operation.get("asset_type") == "native"
     ]
     try:
@@ -461,23 +515,41 @@ async def confirm_payment(transaction_hash: str, milestone_id: str, ledger: int 
             status_code=422,
             detail="Transaction does not match the milestone source, destination, native asset, and amount",
         )
+
+    project = db.get(Project, agreement.project_id)
     payment = PaymentRecord(
         agreement_id=agreement.id,
         milestone_id=milestone.id,
         amount=milestone.amount,
         asset=agreement.asset,
         transaction_hash=transaction_hash,
-        ledger=ledger if ledger is not None else transaction.get("ledger"),
+        ledger=transaction.get("ledger"),
         network="testnet",
         status="confirmed",
         confirmed_at=datetime.utcnow(),
         source_account=client.stellar_address,
         destination_account=freelancer.stellar_address,
+        intent_id=intent.id if intent else None,
+        memo=intent.memo if intent else None,
     )
     milestone.status = "payment_released"
     db.add(payment)
+    db.flush()
+    invoice = finance.create_invoice_for_payment(db, payment)
+    if intent:
+        intent.status = "confirmed"
+        intent.confirmed_at = datetime.utcnow()
+    notify(db, freelancer.id, "Payment verified", f'Payment for "{milestone.title}" was verified on Stellar Testnet.', "payment", "payment", payment.id)
+    audit(db, user.id, "payment", payment.id, "confirmed", transaction_hash)
     db.commit()
-    return {"status": "confirmed", "transaction_hash": transaction_hash}
+    return {
+        "status": "confirmed",
+        "transaction_hash": transaction_hash,
+        "network": "testnet",
+        "payment_id": payment.id,
+        "invoice_id": invoice.id,
+        "duplicate": False,
+    }
 
 
 @app.get("/api/stellar/account/{address}")
@@ -493,7 +565,24 @@ async def stellar_account(address: str):
 @app.get("/api/notifications")
 def notifications(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     items = db.query(Notification).filter(Notification.user_id == user.id).order_by(Notification.created_at.desc()).all()
-    return [{"id": n.id, "title": n.title, "message": n.message, "read": n.read, "created_at": n.created_at.isoformat()} for n in items]
+    return [
+        {
+            "id": n.id,
+            "title": n.title,
+            "message": n.message,
+            "read": n.read,
+            "category": n.category,
+            "entity_type": n.entity_type,
+            "entity_id": n.entity_id,
+            "created_at": n.created_at.isoformat(),
+        }
+        for n in items
+    ]
+
+
+@app.get("/api/notifications/unread-count")
+def unread_notification_count(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return {"count": db.query(Notification).filter(Notification.user_id == user.id, Notification.read.is_(False)).count()}
 
 
 @app.post("/api/notifications/{notification_id}/read")
@@ -519,13 +608,23 @@ def payment_history(user: User = Depends(get_current_user), db: Session = Depend
         "id": payment.id,
         "milestone_id": payment.milestone_id,
         "agreement_id": payment.agreement_id,
-        "amount": float(payment.amount),
+        "amount": to_float(payment.amount),
         "asset": payment.asset,
         "transaction_hash": payment.transaction_hash,
         "ledger": payment.ledger,
         "network": payment.network,
         "status": payment.status,
-        "confirmed_at": payment.confirmed_at.isoformat() if payment.confirmed_at else None,
+        "confirmed_at": serialize_datetime(payment.confirmed_at),
         "source_account": payment.source_account,
         "destination_account": payment.destination_account,
+        "memo": payment.memo,
     } for payment in payments]
+
+
+app.include_router(projects.router)
+app.include_router(agreements.router)
+app.include_router(milestones.router)
+app.include_router(disputes.router)
+app.include_router(finance.router)
+app.include_router(dashboard.router)
+app.include_router(stellar.router)

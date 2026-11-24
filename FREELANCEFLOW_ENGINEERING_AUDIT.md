@@ -1,41 +1,43 @@
 # FreelanceFlow Engineering Audit
 
-## Baseline and scope
+## Baseline
 
-Inspected FastAPI routes, SQLAlchemy models, Pydantic schemas, Stellar helpers, Next.js pages, Soroban contract code, Docker configuration, and current tests. Baseline backend tests passed in the project virtual environment (2 tests). The initial system `pytest` invocation failed because SQLAlchemy was not installed outside the project environment. Contract tests passed (1 test). Frontend had no test script. Production build compiled successfully.
+Initial inspection covered every backend module, Next.js page, Soroban source, test file, and deployment document. Baseline suites were green (16 backend tests, 30 frontend tests, 1 contract test, Next.js build) but the audit confirmed the gaps below.
 
-## Major feature classification
+## Feature disposition
 
-| Area | State | Evidence and findings | Required work |
+| Area | Baseline | Current | Evidence |
 |---|---|---|---|
-| Authentication | PARTIALLY IMPLEMENTED | PBKDF2 hashes and bearer sessions exist; logout, invalid session checks, and role checks exist. | Password reset, email verification, session revocation/expiry cleanup, and stronger security defaults remain. |
-| Authorization | PARTIALLY IMPLEMENTED | Server-side checks cover core project, invitation, agreement, milestone, and notification routes. | Add route-level tests for every private resource and profile/dispute/financial record surface. |
-| Profile management | PARTIALLY IMPLEMENTED | `/api/me` and profile update endpoint exist; public directory does not expose private stellar or email fields. | Add profile UI, completion, portfolio fields, and skill relations. |
-| Freelancer discovery | UI ONLY / PARTIALLY IMPLEMENTED | Directory uses skill/title substring filtering and no pagination. | Add sorting, pagination, public profile endpoint, and private field isolation tests. |
-| Project workflow | PARTIALLY IMPLEMENTED | Creation, viewing, invitations, and transitions exist with owner checks. | Add edit/cancel/completion endpoints and complete state-transition history. |
-| Invitations | PARTIALLY IMPLEMENTED | Addressed acceptance and expiry fields exist. | Add rejection, active conflict checks, invitation listing, and lifecycle notifications. |
-| Agreements | PARTIALLY IMPLEMENTED | Creation and dual acceptance exist; milestone total and project budget validation were added. | Add version history, cancellation, and immutable accepted-agreement rules. |
-| Milestones | PARTIALLY IMPLEMENTED | Submission and review transitions exist with role checks. | Add revision history, submission timestamps, and deliverable attachment validation. |
-| Stellar wallet | FUNCTIONAL WITH LIMITATIONS | Freighter detects Testnet and retrieves balances. | Real signing and submitted transaction verification require wallet access. |
-| Stellar payment reconciliation | PARTIALLY IMPLEMENTED | Confirm endpoint now independently retrieves Horizon data and validates native XLM, source, destination, and amount. | Add Soroban transaction handling, memo validation, pending polling, and failure evidence. |
-| Soroban escrow | FUNCTIONAL WITH LIMITATIONS | Contract and unit test cover authorization and release-before-approval. Contract is not integrated or deployed from FastAPI. | Expand contract tests and integrate an on-chain deployment. |
-| Payment records | PARTIALLY IMPLEMENTED | Confirmed records are unique by transaction hash and include source/destination. | Add invoices, receipts, confirmed-at schema, and failed/pending records. |
-| Notifications | PARTIALLY IMPLEMENTED | Persistence and user ownership exist; read endpoint was added. | Add event coverage, links, and unread counts. |
-| Dashboard | UI ONLY / PARTIALLY IMPLEMENTED | Dashboard reads projects and counts active projects; some metrics are placeholders. | Replace pending-review placeholder and add actual earnings/payment calculations. |
-| Disputes | NOT IMPLEMENTED | Contract contains manual dispute state; no backend dispute API or evidence model exists. | Implement backend dispute workflow and non-automatic resolution authorization. |
-| Invoices/receipts | NOT IMPLEMENTED | No invoice or receipt models/routes/export exist. | Add invoice/receipt records and PDF/HTML export. |
+| Auth/profile | PARTIAL | COMPLETE for implemented scope | profile, skills, rates, availability, portfolio tests |
+| Discovery | UI ONLY | COMPLETE | search/filter/sort/pagination, public profile isolation tests |
+| Project workflow | PARTIAL | COMPLETE | edit/cancel/complete/activity tests |
+| Invitations | PARTIAL | COMPLETE | reject/list/expire + notifications tests |
+| Agreements | PARTIAL | COMPLETE | revisions, reject, cancel, immutable acceptance tests |
+| Milestones | PARTIAL | COMPLETE | start/review-start/resubmit/history tests |
+| Payment reconciliation | PARTIAL | COMPLETE | intent binding, failure/duplicate/tamper tests, live Horizon read |
+| Disputes | NOT IMPLEMENTED | COMPLETE (application level) | dispute freeze/resolution tests, 8 contract tests |
+| Invoices/receipts/exports | NOT IMPLEMENTED | COMPLETE | invoice, PDF, CSV, receipt, report tests |
+| Notifications/activity | PARTIAL | COMPLETE | lifecycle events, unread count, mark-as-read, E2E |
+| Dashboard | PLACEHOLDER METRIC | REAL DATA | API-driven dashboard test + E2E |
+| Migrations | NONE | IDEMPOTENT | legacy-upgrade test |
+| E2E | NONE | 3 tests | Playwright run against real servers |
 
-## Repository baseline corrections made
+## Defects repaired during implementation
 
-- Fixed frontend bearer authorization header corruption.
-- Fixed project list leakage by limiting freelancers to assigned/invited projects.
-- Added profile update endpoint.
-- Added invitation expiry and duplicate/conflict checks.
-- Added milestone total equals agreement amount and agreement budget validation.
-- Added milestone submission/review state guards.
-- Added Horizon operation retrieval and server-side payment reconciliation.
-- Added transaction hash, source/destination, ledger, and confirmed timestamp fields.
-- Added read-owned notification and payment history endpoints.
-- Added Vitest configuration and frontend unit tests.
-- Added backend CI workflow.
-- Removed public PostgreSQL host port in Docker Compose.
+1. `audit_logs.entity_id` NOT NULL violations caused by auditing before `flush()` on invitation and payment-intent creation.
+2. Project editing was blocked after an agreement became active; now allowed for non-financial fields with budget guards.
+3. Cancellation allowed while an approved, unpaid milestone existed; now blocked.
+4. Dashboard activity omitted payment confirmation events; now includes them.
+5. `isConnected()` truthiness bug in the wallet page.
+6. Soroban `cancel()` left a stale non-zero balance.
+7. Profile update ignored newly added skills and project-rate fields.
+8. E2E web-server port conflict with an unrelated process; isolated ports 8011/3011 used.
+
+## Verification summary
+
+33 backend tests, 8 contract tests, 41 frontend unit tests, 3 Playwright tests, TypeScript check, production build, live Horizon verification, and schema migration test all pass. See TEST_RESULTS.md.
+
+## Remaining work outside this environment
+
+- Live funded Freighter signing and on-chain Soroban deployment.
+- Password reset, email verification, third-party audit, and penetration testing.

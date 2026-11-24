@@ -2,26 +2,58 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import AppShell from "@/components/AppShell";
 import { apiRequest } from "@/lib/api";
 
-interface Freelancer { id: string; full_name: string; title: string; description: string; hourly_rate: number | null }
+interface Freelancer {
+  id: string;
+  full_name: string;
+  title: string;
+  description: string;
+  skills: string;
+  hourly_rate: number | null;
+  available: boolean;
+  portfolio_count: number;
+}
 
 export default function DirectoryPage() {
   const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
   const [search, setSearch] = useState("");
+  const [availableOnly, setAvailableOnly] = useState(false);
+  const [sort, setSort] = useState("name");
 
   useEffect(() => {
-    apiRequest<Freelancer[]>(`/api/freelancers${search ? `?skill=${encodeURIComponent(search)}` : ""}`).then(setFreelancers).catch(() => setFreelancers([]));
-  }, [search]);
+    const query = new URLSearchParams();
+    if (search) query.set("skill", search);
+    if (availableOnly) query.set("available_only", "true");
+    query.set("sort", sort);
+    let active = true;
+    apiRequest<Freelancer[]>(`/api/freelancers?${query.toString()}`)
+      .then((items) => { if (active) setFreelancers(items); })
+      .catch(() => { if (active) setFreelancers([]); });
+    return () => { active = false; };
+  }, [search, availableOnly, sort]);
 
   return (
-    <main className="appShell">
-      <aside className="sidebar"><Link className="brand" href="/"><span className="brandMark">F</span>FreelanceFlow</Link><nav className="sidebarNav"><Link href="/dashboard">Overview</Link><Link href="/directory">Freelancers</Link><Link href="/projects">Projects</Link></nav></aside>
-      <section className="appMain"><header className="appTopbar"><strong>Freelancer directory</strong><Link href="/dashboard">Workspace</Link></header><div className="appContent">
-        <p className="eyebrow">Discover talent</p><h1>Find the right specialist.</h1>
-        <div className="field" style={{ maxWidth: 480 }}><label htmlFor="search">Search by skill or title</label><input id="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Brand, React, copywriting..." /></div>
-        {freelancers.length ? <div className="metricGrid">{freelancers.map((freelancer) => <article className="metric" key={freelancer.id}><span>{freelancer.title}</span><h2 style={{ fontSize: 18, marginBottom: 8 }}>{freelancer.full_name}</h2><p style={{ color: "var(--muted)", minHeight: 42 }}>{freelancer.description || "Profile details available from their agreement."}</p><strong>{freelancer.hourly_rate ? `${freelancer.hourly_rate} XLM/hr` : "Project rate"}</strong></article>)}</div> : <div className="walletBox">No profiles match this search. Try a broader term.</div>}
-      </div></section>
-    </main>
+    <AppShell title="Freelancer directory" subtitle="Verified work history">
+      <p className="eyebrow">Discover talent</p>
+      <h1>Find the right specialist.</h1>
+      <div className="filterRow">
+        <div className="field"><label htmlFor="search">Search by skill or title</label><input id="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="React, accessibility, copywriting..." /></div>
+        <div className="field"><label htmlFor="sort">Sort</label><select id="sort" value={sort} onChange={(event) => setSort(event.target.value)}><option value="name">Name</option><option value="rate">Hourly rate</option></select></div>
+        <label className="checkbox"><input type="checkbox" checked={availableOnly} onChange={(event) => setAvailableOnly(event.target.checked)} /> Available only</label>
+      </div>
+      {freelancers.length ? (
+        <div className="metricGrid">{freelancers.map((freelancer) => (
+          <article className="metric" key={freelancer.id}>
+            <span>{freelancer.title || "Freelancer"}</span>
+            <h2 style={{ fontSize: 18, marginBottom: 8 }}><Link href={`/directory/${freelancer.id}`} style={{ color: "var(--blue)" }}>{freelancer.full_name}</Link></h2>
+            <p style={{ color: "var(--muted)", minHeight: 42 }}>{freelancer.description || "Public profile available."}</p>
+            <strong>{freelancer.hourly_rate !== null ? `${freelancer.hourly_rate} XLM/hr` : "Project rate"}</strong>
+            <p><span className="chip">{freelancer.available ? "Available" : "Booked"}</span> <span className="chip">{freelancer.portfolio_count} portfolio item(s)</span></p>
+          </article>
+        ))}</div>
+      ) : <div className="walletBox">No profiles match this search. Try a broader term.</div>}
+    </AppShell>
   );
 }

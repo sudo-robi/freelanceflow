@@ -2,25 +2,34 @@
 
 ## Scope
 
-The repository contains `contracts/src/lib.rs`, a Soroban escrow implementation. It was reviewed statically and with the current Cargo test suite.
+`contracts/src/lib.rs` is a Soroban escrow contract reviewed statically and executed with the Soroban test environment (`soroban-sdk` 30.0.0, `testutils`, registered Stellar asset contract).
 
-## Implemented contract areas
+## Implemented contract behavior
 
-- Agreement creation and duplicate-agreement prevention
-- Freelancer acceptance
-- Client-only funding
-- Milestone approval and duplicate release protection
-- Insufficient-balance and invalid-milestone checks
-- Client/freelancer cancellation refund
-- Manual dispute state
-- Released and funded balance tracking
+- Agreement creation with duplicate-ID protection and positive amount validation.
+- Freelancer-only acceptance; client-only funding after acceptance.
+- Milestone approval and single release with balance checks.
+- Cancellation refund of all unreleased funds to the client.
+- Dispute state that blocks approval, release, funding, and release after cancellation.
+- Balance tracking of funded minus released amounts.
 
-## Test status
+## Defect found and repaired
 
-Executed: release before approval is rejected.
+The original `cancel()` refunded funds but left `funded_amount` unchanged, so `balance()` still reported locked funds after cancellation. The contract now sets `funded_amount = released_amount` after refunding. The regression is covered by `cancellation_refunds_unreleased_funds`.
 
-Not yet executed in this environment: successful initialization/funding/release, incorrect funding, unauthorized operations, duplicate release, invalid milestone, invalid asset, cancellation/refund, dispute restrictions, and multiple milestones.
+## Test results
 
-## Integration status
+`cd contracts && cargo test` — **8 passed, 0 failed**:
 
-No deployment ID is configured and no FastAPI route invokes the contract. The contract must not be represented as live, deployed, or production-ready. It has not been audited by an independent third party.
+1. `rejects_release_before_approval`
+2. `rejects_zero_and_negative_milestone_amounts`
+3. `only_assigned_freelancer_can_accept`
+4. `funding_requires_acceptance_and_transfers_tokens`
+5. `approved_milestone_release_pays_freelancer_once`
+6. `dispute_blocks_approval_release_funding_and_preserves_balance`
+7. `cancellation_refunds_unreleased_funds`
+8. `unauthorized_party_cannot_open_dispute`
+
+## Integration and deployment status
+
+No contract ID, deployment transaction, or on-chain release is claimed. No FastAPI route invokes the contract. The contract contains `open_dispute` but no on-chain resolution function; application-level dispute resolution is stored in the database and never releases funds automatically. Independent third-party audit has not been performed.

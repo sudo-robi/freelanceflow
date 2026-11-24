@@ -1,40 +1,34 @@
 # Test Strategy
 
-## Backend
+## Backend (pytest)
 
-Pytest uses an isolated SQLite metadata database by dropping and recreating tables per test. Tests cover registration, login, role separation, project isolation, milestone totals, invitation acceptance, milestone revision, sessions, and Horizon-matched payment confirmation with a controlled async transaction response.
+`backend/.venv/bin/python -m pytest -ra` runs 33 tests:
 
-Run:
+- `test_auth_projects.py`: registration, login, role separation, ownership isolation, agreement validation, milestone revision, session rejection, security headers, Horizon-matched confirmation, wrong-source rejection.
+- `test_database.py`: SQLite default, `postgres://` and `postgresql://` normalization, connect arguments, `get_db` yield/close.
+- `test_platform_workflows.py`: discovery, portfolio/availability, project lifecycle, invitations, agreement revisions, milestone history, payment intents and memo binding, rejected/failed/duplicate/incorrect payments, invoices/CSV/PDF/receipts, disputes, dashboards, notifications, Stellar verification.
+- `test_migration.py`: legacy schema upgrade without data loss and application startup.
 
-```bash
-cd backend
-.venv/bin/python -m pytest
-```
+External Horizon calls are replaced at the `get_transaction` boundary in unit tests. Live Horizon reads are executed separately and recorded in TEST_RESULTS.md.
 
-## Frontend
+## Frontend (Vitest + Testing Library)
 
-Vitest and jsdom test API credentials and browser storage behavior. Next.js production build validates all routes and TypeScript.
+`cd frontend && npm test` runs 41 tests:
 
-Run:
+- API helper: token handling, header merge, success/error parsing, `API_URL` resolution.
+- API proxy route: configuration errors, path encoding, header filtering, body handling, all HTTP methods, upstream status/header relay.
+- Stellar helper: Freighter connection/network checks, transaction construction, signature rejection, submission result.
+- Dashboard: real API-driven metrics and error handling.
+- App shell: navigation surface.
 
-```bash
-cd frontend
-npm install
-npm test
-npm run build
-```
+## Smart contract (Cargo)
 
-## Smart contract
+`cd contracts && cargo test` runs 8 tests with `testutils` and a registered Stellar asset contract: amount validation, acceptance authorization, funding rules, single release, dispute blocking, cancellation refund, unauthorized dispute.
 
-Cargo test executes the Soroban test environment. The current test verifies that release fails before approval.
+## End-to-end (Playwright)
 
-Run:
-
-```bash
-cd contracts
-cargo test
-```
+`cd frontend && npm run test:e2e` starts an isolated backend and the production Next.js server, then exercises registration, project creation, directory/profile, and dispute workflows in Chromium.
 
 ## Integration boundary
 
-Real Freighter signing and funded Stellar Testnet transactions must be tested separately because CI has no wallet credential or browser approval. Horizon verification is unit-tested through a controlled async boundary; live network verification remains blocked pending funded Testnet wallet access.
+Real Freighter signing and funded Testnet transactions require wallet credentials and human approval. They are not faked: the frontend uses the official SDK to build and submit transactions, and the backend independently verifies them against Horizon. Mocks are confined to isolated automated tests.

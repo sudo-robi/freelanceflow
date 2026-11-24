@@ -1,32 +1,34 @@
 # FreelanceFlow Security Audit
 
-## Scope and limitations
+Scope: application and contract review plus executed tests in this repository. This is not an independent penetration test or certification.
 
-This is an application-level review, not an independent penetration test or security certification. Live Horizon, browser-wallet signing, PostgreSQL, TLS deployment, and a deployed Soroban contract were not all available for verification.
+## Findings and corrections
 
-| Severity | Component | Finding | Status | Correction and test |
-|---|---|---|---|---|
-| HIGH | Payment confirmation | Confirmation previously accepted arbitrary transaction hashes. | FIXED | Horizon success, native asset, exact registered client source, freelancer destination, and milestone amount are now required. Duplicate confirmation and wrong-source tests pass. |
-| MEDIUM | Agreement milestones | Milestone dictionaries could use unvalidated financial amounts. | FIXED | Pydantic milestone models plus exact agreement/project amount validation were added. |
-| MEDIUM | Docker database | PostgreSQL used fixed credentials and an exposed deployment configuration. | FIXED | Compose requires injected PostgreSQL user/password values and does not publish the database port. |
-| MEDIUM | Frontend API authorization | Authenticated API requests could contain a corrupted authorization header. | FIXED | The API helper constructs a Bearer authorization header. Unit tests cover authenticated and cleared credentials. |
-| MEDIUM | Project visibility | Freelancer project listings could expose all unassigned projects. | FIXED | Listings are limited to assigned projects and pending invitations. |
+| Severity | Area | Finding | Status |
+|---|---|---|---|
+| HIGH | Payment confirmation | Hash alone was never proof; existing flow already verified Horizon, but lacked intent binding and dispute checks. | FIXED — memo/source/destination/amount/network binding, active-dispute block, cancelled-agreement block, idempotent duplicate handling, no client-supplied ledger. |
+| HIGH | Disputes | No dispute API existed, so funds could be released while contested. | FIXED — dispute state blocks submit/review/confirm/cancel/complete; two-party resolution; no automatic release. |
+| HIGH | Soroban contract | `cancel()` left a non-zero balance after refund. | FIXED — balance zeroed after refund; regression test added. |
+| MEDIUM | Authorization | New financial, dispute, and profile surfaces needed ownership checks. | FIXED — all routers use `get_current_user` plus per-object checks; denial tests added. |
+| MEDIUM | Discovery | Public directory could leak email/address/hash. | FIXED — explicit public projection with portfolio only; test added. |
+| MEDIUM | Freighter | `isConnected()` object was treated as truthy, so a disconnected wallet could appear connected. | FIXED — checks `isConnected.isConnected` and error field. |
+| MEDIUM | Migration | Existing databases lacked new columns/tables. | FIXED — idempotent `ensure_schema()` preserves data; tested. |
+| MEDIUM | Deliverables | Arbitrary strings accepted as deliverable/evidence URLs. | FIXED — HTTP(S) validation at schema and endpoint boundaries. |
+| LOW | Dashboard | Placeholder values could be mistaken for earnings. | FIXED — dashboard reads only verified records; landing preview explicitly labeled illustrative. |
 
 ## Security characteristics
 
-- PBKDF2-HMAC-SHA256 password hashing with random salts.
-- Random 48-byte URL-safe session tokens.
-- Expired sessions are deleted when encountered.
-- Server-side role and object ownership checks.
-- Configurable CORS origins.
-- Baseline response security headers.
-- Native Testnet XLM is restricted in agreement creation and payment reconciliation.
-- Private keys and recovery phrases are not handled or stored.
+- PBKDF2-HMAC-SHA256 with random salt and 200,000 iterations; constant-time verification.
+- Random high-entropy session tokens; expiry enforced and expired rows deleted.
+- Server-side role and object ownership checks on every private resource.
+- CORS origins configurable; security headers on all responses.
+- All monetary values validated with Pydantic `Decimal` and stored as SQLAlchemy `Numeric`.
+- Native Testnet XLM only; exact source, destination, asset, amount, and memo required.
+- No secrets, private keys, or recovery phrases stored; no `.env` committed.
 
-## Remaining external limitations
+## Remaining limitations
 
-- Live funded-wallet signing and Horizon verification.
-- Live Soroban deployment and contract integration.
-- Invoice, dispute, and attachment authorization implementations.
-- Password reset and email verification if account lifecycle support is introduced.
-- Independent third-party contract audit and penetration test.
+- Live funded-wallet signing, browser approval, and on-chain escrow deployment require credentials not available here.
+- No independent third-party contract audit or penetration test.
+- Password reset and email verification are not implemented.
+- The Soroban contract has no on-chain dispute-resolution entry point.

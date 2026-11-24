@@ -2,45 +2,54 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { apiRequest } from "@/lib/api";
+import AppShell from "@/components/AppShell";
+import { connectFreighter, loadTestnetBalances } from "@/lib/stellar";
 
 export default function WalletPage() {
   const [address, setAddress] = useState("");
   const [network, setNetwork] = useState("");
   const [error, setError] = useState("");
-  const [balance, setBalance] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [balances, setBalances] = useState<string[]>([]);
 
   async function connectWallet() {
+    setBusy(true);
     setError("");
     try {
-      const freighter = await import("@stellar/freighter-api");
-      const installed = freighter.isConnected ? await freighter.isConnected() : false;
-      if (!installed) throw new Error("Freighter is not installed or unavailable");
-      const connection = await freighter.requestAccess();
-      if (connection.error) throw new Error(connection.error);
-      const networkResult = await freighter.getNetwork();
-      if (networkResult.networkPassphrase !== "Test SDF Network ; September 2015") throw new Error("Switch Freighter to Stellar Testnet");
+      const connection = await connectFreighter();
+      const items = await loadTestnetBalances(connection.address);
       setAddress(connection.address);
       setNetwork("Testnet");
-      const account = await apiRequest<{ balances?: { balance: string; asset_type: string }[] }>(
-        `/api/stellar/account/${connection.address}`,
-      );
-      setBalance((account.balances || []).map((item) => `${item.balance} ${item.asset_type === "native" ? "XLM" : item.asset_type}`));
+      setBalances(items);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Wallet connection failed");
+      setAddress("");
+      setBalances([]);
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
-    <main className="appShell">
-      <aside className="sidebar"><Link className="brand" href="/"><span className="brandMark">F</span>FreelanceFlow</Link><nav className="sidebarNav"><Link href="/dashboard">Overview</Link><Link href="/wallet">Stellar wallet</Link></nav></aside>
-      <section className="appMain"><header className="appTopbar"><strong>Wallet</strong><span>Testnet</span></header><div className="appContent">
-        <p className="eyebrow">Stellar Testnet</p><h1>Connect Freighter.</h1>
-        <div className="walletBox"><button className="button" onClick={connectWallet}>{address ? "Reconnect wallet" : "Connect Freighter"}</button>
-          {error && <div className="error" role="alert" style={{ marginTop: 16 }}>{error}</div>}
-          {address && <div style={{ marginTop: 20 }}><span style={{ color: "var(--muted)", fontSize: 13 }}>Public address · {network}</span><div className="walletAddress" style={{ marginTop: 8 }}>{address}</div>{balance.map((item) => <p key={item}><strong>{item}</strong></p>)}</div>}
-        </div>
-      </div></section>
-    </main>
+    <AppShell title="Wallet" subtitle="Stellar Testnet">
+      <div className="appHeaderRow">
+        <div><p className="eyebrow">Stellar Testnet</p><h1>Connect Freighter.</h1></div>
+        <Link className="textButton" href="/payments">Payment history →</Link>
+      </div>
+      <div className="walletBox">
+        <button className="button" onClick={() => void connectWallet()} disabled={busy}>
+          {busy ? "Connecting..." : address ? "Reconnect wallet" : "Connect Freighter"}
+        </button>
+        {error && <div className="error" role="alert" style={{ marginTop: 16 }}>{error}</div>}
+        {address && (
+          <div style={{ marginTop: 20 }}>
+            <span style={{ color: "var(--muted)", fontSize: 13 }}>Public address · {network}</span>
+            <div className="walletAddress" style={{ marginTop: 8 }}>{address}</div>
+            <h2 style={{ fontSize: 16, marginTop: 20 }}>Verified Testnet balances</h2>
+            {balances.length ? balances.map((item) => <p key={item}><strong>{item}</strong></p>) : <p>No balances returned by Horizon.</p>}
+          </div>
+        )}
+      </div>
+    </AppShell>
   );
 }
