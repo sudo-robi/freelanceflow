@@ -1,18 +1,23 @@
 # FreelanceFlow
 
-FreelanceFlow is a two-sided freelancer agreement and milestone payment platform on Stellar Testnet.
+FreelanceFlow is a two-sided freelancer agreement and milestone payment platform on Stellar. Payments are never simulated: the browser builds a real transaction from a backend payment intent, Freighter signs it, Horizon receives it, and the backend independently verifies it before any payment record, invoice, or earnings figure exists.
 
 ## Implemented
 
-- FastAPI authentication with PBKDF2 password hashing and bearer sessions
-- Freelancer/client role separation
-- SQLAlchemy data model for users, profiles, projects, invitations, agreements, milestones, payments, notifications, and audit logs
-- Project creation, freelancer invitation, agreement acceptance, milestone submission/review, and payment confirmation APIs
-- Independent Horizon transaction verification endpoint
-- Freighter Testnet wallet connection and account balance lookup UI
-- Next.js marketing, authentication, dashboard, project, directory, notification, and wallet routes
-- Soroban escrow contract with client/freelancer authorization, milestone approval/release, cancellation refund, dispute state, duplicate-release protection, and balance tracking
-- Docker Compose for PostgreSQL, API, and web services
+- FastAPI registration, login, logout, PBKDF2 password hashing, bearer sessions, role separation.
+- Persistent profiles, availability, skills, portfolio, public freelancer directory with search/filter/sort/pagination.
+- Project create, edit, cancel, complete, deadlines, status tracking, invitations (accept/reject/expire), and activity history.
+- Work agreements with scope of work, dual acceptance, rejection, cancellation, milestone replacement, and immutable revision history.
+- Milestones with start, submit, review, revision/resubmission, submission counts, and funding status.
+- Payment intents binding source, destination, amount, asset, network, and memo; real Freighter signing and Horizon submission; independent verification; idempotent confirmation; duplicate and tamper rejection.
+- Verified payment records, receipts, invoices with generated PDFs, CSV export, monthly financial reports, and role-scoped transaction history.
+- Disputes with evidence, status history, two-party resolution, and a hard block on automatic fund release.
+- Persistent notifications and audit events across every lifecycle stage; unread counts and mark-as-read.
+- Role-specific dashboards built only from database records and independently verified payments.
+- Idempotent schema migration that adds columns and tables to existing SQLite/PostgreSQL databases without dropping data.
+- Soroban escrow contract with authorization, funding, approval, release, cancellation refund, and dispute blocking; eight contract tests.
+- Next.js pages for dashboard, projects, project workspace, directory, freelancer profile, payments, disputes, wallet, notifications, profile, login, and register.
+- Playwright end-to-end suite against real backend and frontend servers.
 
 ## Run locally
 
@@ -31,16 +36,19 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000. API docs: http://localhost:8000/docs.
 
 ## Tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest
+cd backend && .venv/bin/python -m pytest -ra
 cd contracts && cargo test
 cd frontend && npm test
 cd frontend && npm run build
+cd frontend && npm run test:e2e
 ```
+
+Latest results: 33 backend tests, 8 contract tests, 41 frontend unit tests, 3 Playwright end-to-end tests, and the Next.js production build all pass. See [TEST_RESULTS.md](TEST_RESULTS.md).
 
 ## Docker
 
@@ -48,35 +56,17 @@ cd frontend && npm run build
 docker compose up --build
 ```
 
-API documentation: http://localhost:8000/docs
+## Stellar integration
 
-## Stellar network
-
-- Network: Stellar Testnet
-- Passphrase: `Test SDF Network ; September 2015`
-- Horizon: https://horizon-testnet.stellar.org
-- RPC: https://soroban-testnet.stellar.org
-
-The app never switches networks or requests private keys/recovery phrases. Stellar transactions require Freighter approval in the browser and are independently checked against Horizon before a payment is persisted.
+The configured network, endpoints, and passphrase are defined in the application code and documented in [STELLAR_INTEGRATION.md](STELLAR_INTEGRATION.md). The app never requests private keys or recovery phrases. Browser-side balances are informational only; payment confirmation always comes from Horizon after independent verification.
 
 ## Soroban contract
 
-```bash
-cd contracts
-rustup target add wasm32v1-none
-cargo build --target wasm32v1-none --release
-stellar contract build
-stellar contract deploy --wasm target/wasm32v1-none/release/freelanceflow_escrow.wasm --network testnet
-```
+No contract ID or deployment transaction is claimed. See [SMART_CONTRACT_REVIEW.md](SMART_CONTRACT_REVIEW.md) for tested behavior and deployment limits.
 
-No contract ID or transaction hash is claimed unless the deployment and on-chain release are executed and observed. Set the returned contract ID in `SOROBAN_ESCROW_CONTRACT_ID` when deployment is performed.
+## Records
 
-## Known limitation
-
-Freighter signing and a live Testnet escrow deployment require wallet access, funded Testnet accounts, and an external Stellar CLI/session. Dispute resolution is represented as a manual, non-automatic state in the MVP. Real funds must not be sent to Testnet escrow addresses outside the explicit Freighter approval flow.
-
-## Engineering records
-
+- [IMPLEMENTATION_CHECKLIST.md](IMPLEMENTATION_CHECKLIST.md)
 - [FREELANCEFLOW_ENGINEERING_AUDIT.md](FREELANCEFLOW_ENGINEERING_AUDIT.md)
 - [FREELANCEFLOW_SECURITY_AUDIT.md](FREELANCEFLOW_SECURITY_AUDIT.md)
 - [TEST_STRATEGY.md](TEST_STRATEGY.md)

@@ -24,7 +24,8 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="agreementPreview" aria-label="Example milestone agreement">
+        <div className="agreementPreview" aria-label="Illustrative milestone agreement example, not live account data">
+          <p className="illustrativeNote">Illustrative example only — not live account data</p>
           <div className="previewTop">
             <div>
               <p>Agreement FF-2048</p>

@@ -72,6 +72,9 @@ class FreelancerProfile(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     hourly_rate: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     project_rate: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    skills: Mapped[str] = mapped_column(Text, default="")
+    available: Mapped[bool] = mapped_column(Boolean, default=True)
+    availability_note: Mapped[str] = mapped_column(Text, default="")
 
 
 class ClientProfile(Base):
@@ -97,6 +100,9 @@ class Project(Base):
     deadline: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default=ProjectStatus.draft.value)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ProjectInvitation(Base):
@@ -124,6 +130,7 @@ class WorkAgreement(Base):
     client_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     freelancer_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     escrow_contract_id: Mapped[str | None] = mapped_column(String(56), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -139,6 +146,9 @@ class AgreementMilestone(Base):
     status: Mapped[str] = mapped_column(String(32), default=MilestoneStatus.not_started.value)
     deliverable_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    submission_count: Mapped[int] = mapped_column(Integer, default=0)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class PaymentRecord(Base):
@@ -157,6 +167,8 @@ class PaymentRecord(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     source_account: Mapped[str | None] = mapped_column(String(56), nullable=True)
     destination_account: Mapped[str | None] = mapped_column(String(56), nullable=True)
+    intent_id: Mapped[str | None] = mapped_column(ForeignKey("payment_intents.id", ondelete="SET NULL"), nullable=True)
+    memo: Mapped[str | None] = mapped_column(String(28), nullable=True)
 
 
 class Notification(Base):
@@ -167,6 +179,9 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(255))
     message: Mapped[str] = mapped_column(Text)
     read: Mapped[bool] = mapped_column(Boolean, default=False)
+    category: Mapped[str] = mapped_column(String(40), default="general")
+    entity_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -179,4 +194,96 @@ class AuditLog(Base):
     entity_id: Mapped[str] = mapped_column(String(36))
     action: Mapped[str] = mapped_column(String(100))
     details: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PaymentIntent(Base):
+    """Client-created payment request that binds an on-chain payment to a milestone."""
+
+    __tablename__ = "payment_intents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    milestone_id: Mapped[str] = mapped_column(ForeignKey("agreement_milestones.id", ondelete="CASCADE"), index=True)
+    agreement_id: Mapped[str] = mapped_column(ForeignKey("work_agreements.id", ondelete="CASCADE"), index=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    freelancer_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2))
+    asset: Mapped[str] = mapped_column(String(20), default="XLM")
+    network: Mapped[str] = mapped_column(String(20), default="testnet")
+    expected_source: Mapped[str] = mapped_column(String(56))
+    expected_destination: Mapped[str] = mapped_column(String(56))
+    memo: Mapped[str] = mapped_column(String(28), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Dispute(Base):
+    __tablename__ = "disputes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agreement_id: Mapped[str] = mapped_column(ForeignKey("work_agreements.id", ondelete="CASCADE"), index=True)
+    milestone_id: Mapped[str | None] = mapped_column(ForeignKey("agreement_milestones.id", ondelete="SET NULL"), nullable=True, index=True)
+    opened_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    reason: Mapped[str] = mapped_column(Text)
+    evidence_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="open")
+    resolution: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    proposed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DisputeEvent(Base):
+    __tablename__ = "dispute_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    dispute_id: Mapped[str] = mapped_column(ForeignKey("disputes.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action: Mapped[str] = mapped_column(String(80))
+    details: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AgreementRevision(Base):
+    """ Immutable snapshot of an agreement before each accepted revision. """
+
+    __tablename__ = "agreement_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agreement_id: Mapped[str] = mapped_column(ForeignKey("work_agreements.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2))
+    description: Mapped[str] = mapped_column(Text)
+    milestones_json: Mapped[str] = mapped_column(Text)
+    changed_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PortfolioItem(Base):
+    __tablename__ = "portfolio_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    freelancer_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    url: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    payment_id: Mapped[str] = mapped_column(ForeignKey("payment_records.id", ondelete="CASCADE"), unique=True, index=True)
+    invoice_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    freelancer_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2))
+    asset: Mapped[str] = mapped_column(String(20))
+    milestone_title: Mapped[str] = mapped_column(String(255))
+    project_title: Mapped[str] = mapped_column(String(255))
+    transaction_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

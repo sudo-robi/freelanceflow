@@ -52,4 +52,6 @@ The Railway Free plan has one 0.5 GB volume for the project; ensure it is attach
 
 ## Quality gates
 
-CI runs backend pytest, frontend Vitest/build, and Cargo tests. Browser and funded-wallet checks require separate deployment credentials and are not part of credential-free CI.
+CI runs backend pytest (33 tests), frontend Vitest/build (41 tests), and Cargo tests (8 tests). The Playwright suite (3 tests) starts an isolated backend on port 8011 and the production frontend on port 3011 with `API_BACKEND_URL=http://127.0.0.1:8011`; run it with `cd frontend && npm run test:e2e`. Browser and funded-wallet checks require separate deployment credentials and are not part of credential-free CI.
+
+Startup calls `ensure_schema()`, which creates missing tables and adds missing columns to an existing database without dropping data. Set `DATABASE_URL` to the same persistent volume across redeploys.

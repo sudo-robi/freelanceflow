@@ -15,6 +15,32 @@ export function clearToken(): void {
   sessionStorage.removeItem("freelanceflow_session");
 }
 
+export async function downloadAuthenticated(path: string, filename: string): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    let detail = "Download failed";
+    try {
+      const body = (await response.json()) as { detail?: string };
+      detail = body.detail || detail;
+    } catch {
+      // Non-JSON error responses still produce a clear message.
+    }
+    throw new Error(detail);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {

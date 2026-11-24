@@ -6,7 +6,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@stellar/freighter-api": "latest",
@@ -17,12 +18,13 @@
     "react-dom": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@testing-library/react": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "@testing-library/react": "latest",
     "jsdom": "latest",
-    "vitest": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "vitest": "latest"
   }
 }
