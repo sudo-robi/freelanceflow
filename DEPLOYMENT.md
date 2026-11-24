@@ -55,3 +55,5 @@ The Railway Free plan has one 0.5 GB volume for the project; ensure it is attach
 CI runs backend pytest (33 tests), frontend Vitest/build (41 tests), and Cargo tests (8 tests). The Playwright suite (3 tests) starts an isolated backend on port 8011 and the production frontend on port 3011 with `API_BACKEND_URL=http://127.0.0.1:8011`; run it with `cd frontend && npm run test:e2e`. Browser and funded-wallet checks require separate deployment credentials and are not part of credential-free CI.
 
 Startup calls `ensure_schema()`, which creates missing tables and adds missing columns to an existing database without dropping data. Set `DATABASE_URL` to the same persistent volume across redeploys.
+
+The Soroban escrow contract is deployed and verified on the configured network as `CA5FBQ4VEJ4ZXGVDVMAGRP6JKEB7AGUUG5ZR3NYSNG3A6XFUUVCL37CI` (WASM hash `906f98af2a1ae3bb8a816ea65bab35b130c3f4ab02d1ba40335a8ca1eb9b527a`). It is not currently invoked by the API; see SMART_CONTRACT_REVIEW.md for transaction evidence.

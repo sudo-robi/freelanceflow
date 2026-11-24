@@ -14,6 +14,8 @@ Executed 2026-11-24/25 in `/home/robi/Desktop/freelanceflow`.
 | Live Horizon read | `GET https://horizon-testnet.stellar.org/transactions?limit=1` | **PASS — real hash `be1f...a83e`, successful, ledger 5907518** |
 | Live backend verification | `GET /api/stellar/transaction/{hash}` | **PASS — 200, network testnet, passphrase verified, source `GD5K...HCAH3`, ledger 5907518** |
 | Live Soroban RPC | `POST getNetwork` | **PASS — passphrase `Test SDF Network ; September 2015`, protocol 30** |
+| Soroban deployment | `stellar contract build` + `stellar contract deploy` | **PASS — contract `CA5FBQ4VEJ4ZXGVDVMAGRP6JKEB7AGUUG5ZR3NYSNG3A6XFUUVCL37CI`, deploy tx `b2f65b...f69f` status SUCCESS on-chain** |
+| Deployed contract verification | `stellar contract info hash` / `info interface` | **PASS — on-chain WASM hash matches local build; all 8 functions exposed** |
 
 ## Backend coverage evidence
 
