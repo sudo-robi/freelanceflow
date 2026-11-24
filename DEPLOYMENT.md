@@ -18,15 +18,37 @@ npm install
 npm run dev
 ```
 
-Docker:
+Docker Compose:
 
 ```bash
 docker compose up --build
 ```
 
-Set a strong PostgreSQL password and set `DATABASE_URL` to the production database. Do not expose the PostgreSQL port in production.
+Compose requires `POSTGRES_USER` and `POSTGRES_PASSWORD` in the environment or `.env` file. Use a unique, high-entropy password and restrict API CORS origins with `CORS_ALLOWED_ORIGINS`. Never expose PostgreSQL's port publicly.
 
-Docker Compose requires `POSTGRES_USER` and `POSTGRES_PASSWORD` in the environment or `.env` file. Use a unique, high-entropy password and restrict API CORS origins with `CORS_ALLOWED_ORIGINS`.
+## Railway Free deployment
+
+The verified Free plan allows one project with up to three services, including a single-node PostgreSQL service, and $1 of resource usage each month. Services sleep while idle; services stop when the included resource credit is exhausted. This is a low-traffic demo deployment, not an always-on production SLA.
+
+Create a Railway project and services named `api`, `web`, and `Postgres`. Deploy the backend and frontend from their respective directories:
+
+```bash
+railway link
+railway add --database postgres
+railway add --service api
+railway add --service web
+railway up ./backend --path-as-root --service api
+railway up ./frontend --path-as-root --service web
+```
+
+Set these service variables:
+
+- `api`: `DATABASE_URL=${{Postgres.DATABASE_URL}}`
+- `web`: `API_BACKEND_URL=http://api.railway.internal:8000`
+
+The frontend uses a same-origin API proxy, so it does not need `NEXT_PUBLIC_API_URL` in the hosted environment. Generate a public domain for `web` on port 3000; the API can remain private. The backend normalizes Railway's PostgreSQL connection URL to the installed psycopg 3 driver.
+
+The Railway Free plan has one 0.5 GB volume for the project; ensure it is attached to PostgreSQL for data persistence. Set an appropriate workspace usage limit to prevent unexpected spending if the workspace plan changes. For current limitations, see [Railway Free Plan](https://docs.railway.com/pricing/free-plan).
 
 ## Quality gates
 

@@ -1,7 +1,8 @@
 FROM node:24-alpine AS dependencies
 WORKDIR /app
 COPY package.json ./
-RUN npm install
+COPY package-lock.json ./
+RUN npm ci
 
 FROM dependencies AS build
 COPY . .
@@ -13,7 +14,6 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
-COPY --from=build --chown=node:node /app/public ./public
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]

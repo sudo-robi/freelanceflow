@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { apiRequest } from "@/lib/api";
 
 export default function WalletPage() {
   const [address, setAddress] = useState("");
@@ -21,11 +22,10 @@ export default function WalletPage() {
       if (networkResult.networkPassphrase !== "Test SDF Network ; September 2015") throw new Error("Switch Freighter to Stellar Testnet");
       setAddress(connection.address);
       setNetwork("Testnet");
-      const accountResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/stellar/account/${connection.address}`);
-      if (accountResponse.ok) {
-        const account = await accountResponse.json();
-        setBalance((account.balances || []).map((item: { balance: string; asset_type: string }) => `${item.balance} ${item.asset_type === "native" ? "XLM" : item.asset_type}`));
-      }
+      const account = await apiRequest<{ balances?: { balance: string; asset_type: string }[] }>(
+        `/api/stellar/account/${connection.address}`,
+      );
+      setBalance((account.balances || []).map((item) => `${item.balance} ${item.asset_type === "native" ? "XLM" : item.asset_type}`));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Wallet connection failed");
     }
