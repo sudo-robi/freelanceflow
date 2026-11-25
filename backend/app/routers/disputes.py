@@ -12,8 +12,9 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..database import get_db
 from ..models import AgreementMilestone, Dispute, DisputeEvent, Project, User, WorkAgreement
+from ..ratelimit import rate_limit
 from ..schemas import DisputeCreate, DisputeEvidence, DisputeResolution
-from ..services import audit, get_agreement_for_user, notify, serialize_datetime
+from ..services import assert_transition, audit, get_agreement_for_user, lock_row, notify, serialize_datetime
 
 router = APIRouter(prefix="/api", tags=["disputes"])
 
@@ -32,6 +33,7 @@ def dispute_payload(db: Session, dispute: Dispute) -> dict:
         "status": dispute.status,
         "resolution": dispute.resolution,
         "proposed_by": dispute.proposed_by,
+        "proposal_version": dispute.proposal_version or 0,
         "resolved_by": dispute.resolved_by,
         "created_at": serialize_datetime(dispute.created_at),
         "resolved_at": serialize_datetime(dispute.resolved_at),
@@ -56,6 +58,7 @@ def open_dispute(
     payload: DisputeCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("dispute_open", 10, 60)),
 ):
     agreement = get_agreement_for_user(db, payload.agreement_id, user)
     if agreement.status == "cancelled":
@@ -126,7 +129,7 @@ def add_evidence(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    dispute = db.get(Dispute, dispute_id)
+    dispute = lock_row(db, Dispute, dispute_id)
     if not dispute:
         raise HTTPException(status_code=404, detail="Dispute not found")
     get_agreement_for_user(db, dispute.agreement_id, user)
@@ -134,6 +137,7 @@ def add_evidence(
         raise HTTPException(status_code=409, detail="Dispute is closed")
     dispute.evidence_url = payload.evidence_url
     if dispute.status == "open":
+        assert_transition("dispute", dispute.status, "under_review")
         dispute.status = "under_review"
     _event(db, dispute, user, "evidence_added", f"{payload.evidence_url} {payload.note}".strip())
     audit(db, user.id, "dispute", dispute_id, "evidence_added")
@@ -147,20 +151,55 @@ def propose_resolution(
     payload: DisputeResolution,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("dispute_resolve", 10, 60)),
 ):
-    dispute = db.get(Dispute, dispute_id)
+    dispute = lock_row(db, Dispute, dispute_id)
     if not dispute:
         raise HTTPException(status_code=404, detail="Dispute not found")
     agreement = get_agreement_for_user(db, dispute.agreement_id, user)
-    if dispute.status in {"resolved", "rejected"}:
-        raise HTTPException(status_code=409, detail="Dispute is closed")
+    if dispute.status not in {"open", "under_review"}:
+        raise HTTPException(status_code=409, detail="A resolution proposal is already pending or the dispute is closed")
+    assert_transition("dispute", dispute.status, "awaiting_counterparty")
     dispute.status = "awaiting_counterparty"
     dispute.resolution = payload.resolution
     dispute.proposed_by = user.id
+    dispute.proposal_version = 1
     _event(db, dispute, user, "resolution_proposed", payload.resolution)
     counterparty = agreement.freelancer_id if user.id == agreement.client_id else agreement.client_id
     notify(db, counterparty, "Dispute resolution proposed", f"Proposed resolution: {payload.resolution.replace('_', ' ')}.", "dispute", "dispute", dispute.id)
     audit(db, user.id, "dispute", dispute_id, "resolution_proposed", payload.resolution)
+    db.commit()
+    return dispute_payload(db, dispute)
+
+
+@router.post("/disputes/{dispute_id}/amend")
+def amend_resolution(
+    dispute_id: str,
+    payload: DisputeResolution,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("dispute_resolve", 10, 60)),
+):
+    """Explicit, auditable amendment of a pending proposal (no silent overwrite)."""
+    dispute = lock_row(db, Dispute, dispute_id)
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Dispute not found")
+    get_agreement_for_user(db, dispute.agreement_id, user)
+    if dispute.status != "awaiting_counterparty":
+        raise HTTPException(status_code=409, detail="No pending proposal to amend")
+    if dispute.proposed_by != user.id:
+        raise HTTPException(status_code=403, detail="Only the proposing party may amend a proposal")
+    previous = dispute.resolution
+    dispute.resolution = payload.resolution
+    dispute.proposal_version = (dispute.proposal_version or 0) + 1
+    _event(db, dispute, user, "resolution_amended", f"{previous} -> {payload.resolution} (v{dispute.proposal_version})")
+    counterparty = None
+    agreement = db.get(WorkAgreement, dispute.agreement_id)
+    if agreement:
+        counterparty = agreement.freelancer_id if user.id == agreement.client_id else agreement.client_id
+    if counterparty:
+        notify(db, counterparty, "Dispute resolution amended", f"Proposal v{dispute.proposal_version}: {payload.resolution}.", "dispute", "dispute", dispute.id)
+    audit(db, user.id, "dispute", dispute_id, "resolution_amended", payload.resolution)
     db.commit()
     return dispute_payload(db, dispute)
 
@@ -172,12 +211,13 @@ def accept_resolution(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    dispute = db.get(Dispute, dispute_id)
+    dispute = lock_row(db, Dispute, dispute_id)
     if not dispute:
         raise HTTPException(status_code=404, detail="Dispute not found")
     agreement = get_agreement_for_user(db, dispute.agreement_id, user)
     if dispute.status != "awaiting_counterparty":
         raise HTTPException(status_code=409, detail="No resolution is awaiting acceptance")
+    assert_transition("dispute", dispute.status, "resolved")
     if not dispute.proposed_by or dispute.proposed_by == user.id:
         raise HTTPException(status_code=403, detail="The counterparty must accept the proposal")
     if dispute.resolution != payload.resolution:

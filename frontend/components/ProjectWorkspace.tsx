@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
+import { splitMilestoneAmounts } from "@/lib/milestones";
 import { PaymentIntentDetails, signAndSubmitPayment } from "@/lib/stellar";
 
 interface Project {
@@ -255,7 +256,7 @@ export default function ProjectWorkspace({ projectId }: { projectId: string }) {
             const data = new FormData(event.currentTarget);
             const milestoneTitles = String(data.get("milestone_titles") || "").split(",").map((item) => item.trim()).filter(Boolean);
             const total = Number(data.get("amount"));
-            const share = total / Math.max(milestoneTitles.length, 1);
+            const amounts = splitMilestoneAmounts(total, milestoneTitles);
             void act(() => apiRequest(`/api/projects/${projectId}/agreements`, {
               method: "POST",
               body: JSON.stringify({
@@ -263,7 +264,11 @@ export default function ProjectWorkspace({ projectId }: { projectId: string }) {
                 amount: total,
                 asset: "XLM",
                 description: data.get("description"),
-                milestones: milestoneTitles.map((title) => ({ title, description: title, amount: share })),
+                milestones: milestoneTitles.map((title, index) => ({
+                  title,
+                  description: title,
+                  amount: Number(amounts[index]),
+                })),
               }),
             }), "Agreement created and awaiting freelancer acceptance.");
           }}>
