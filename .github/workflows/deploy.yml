@@ -1,0 +1,78 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    name: Build and publish container images
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/api:latest
+            ghcr.io/${{ github.repository }}/api:${{ github.sha }}
+
+      - name: Build and push Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/web:latest
+            ghcr.io/${{ github.repository }}/web:${{ github.sha }}
+
+  railway:
+    name: Deploy services to Railway
+    needs: images
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install Railway CLI
+        if: env.RAILWAY_TOKEN != '' && env.RAILWAY_PROJECT_ID != ''
+        run: npm install -g @railway/cli
+      - name: Link project and configure web service
+        if: env.RAILWAY_TOKEN != '' && env.RAILWAY_PROJECT_ID != ''
+        run: |
+          railway link --project "$RAILWAY_PROJECT_ID"
+          railway variable set API_BACKEND_URL=http://api.railway.internal:8000 --service web --skip-deploys
+      - name: Deploy API and Web
+        if: env.RAILWAY_TOKEN != '' && env.RAILWAY_PROJECT_ID != ''
+        run: |
+          railway up ./backend --path-as-root --service api --detach
+          railway up ./frontend --path-as-root --service web --detach
+      - name: Skip notice
+        if: env.RAILWAY_TOKEN == '' || env.RAILWAY_PROJECT_ID == ''
+        run: echo "Railway secrets not configured; container images were published but no Railway deploy was triggered."

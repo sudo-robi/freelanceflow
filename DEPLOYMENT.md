@@ -50,9 +50,14 @@ The frontend uses a same-origin API proxy, so it does not need `NEXT_PUBLIC_API_
 
 The Railway Free plan has one 0.5 GB volume for the project; ensure it is attached to PostgreSQL for data persistence. Set an appropriate workspace usage limit to prevent unexpected spending if the workspace plan changes. For current limitations, see [Railway Free Plan](https://docs.railway.com/pricing/free-plan).
 
-## Quality gates
+## Quality gates and CI/CD
 
-CI runs backend pytest (33 tests), frontend Vitest/build (41 tests), and Cargo tests (8 tests). The Playwright suite (3 tests) starts an isolated backend on port 8011 and the production frontend on port 3011 with `API_BACKEND_URL=http://127.0.0.1:8011`; run it with `cd frontend && npm run test:e2e`. Browser and funded-wallet checks require separate deployment credentials and are not part of credential-free CI.
+GitHub Actions workflows live in `.github/workflows/`:
+
+- `ci.yml` runs on pushes and pull requests to `main` (and on `phase1-deep-audit`): backend pytest with coverage, frontend Vitest + TypeScript + production build, Cargo tests + WASM build, and the Playwright E2E suite against a real backend/frontend pair.
+- `deploy.yml` runs after a successful CI on `main` (or manually). It builds and publishes `ghcr.io/<owner>/<repo>/api` and `/web` images, then optionally deploys to Railway when `RAILWAY_TOKEN` and `RAILWAY_PROJECT_ID` repository secrets are configured. Without those secrets it skips Railway and only publishes images.
+
+Locally: `cd frontend && npm run test:e2e` starts an isolated backend on port 8011 and the production frontend on port 3011 with `API_BACKEND_URL=http://127.0.0.1:8011`. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use a non-standard Chromium binary. Browser and funded-wallet checks require separate credentials and are not part of credential-free CI.
 
 Startup calls `ensure_schema()`, which creates missing tables and adds missing columns to an existing database without dropping data. Set `DATABASE_URL` to the same persistent volume across redeploys.
 
