@@ -1,5 +1,14 @@
 from decimal import Decimal
+from urllib.parse import urlparse
+
 from pydantic import BaseModel, Field, field_validator
+
+
+def http_url(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("value must be an absolute http:// or https:// URL")
+    return value
 
 
 class RegisterRequest(BaseModel):
@@ -28,8 +37,8 @@ class SessionResponse(BaseModel):
 
 class ProjectCreate(BaseModel):
     title: str = Field(min_length=3, max_length=255)
-    description: str = Field(min_length=10)
-    required_skills: str = ""
+    description: str = Field(min_length=10, max_length=10000)
+    required_skills: str = Field(default="", max_length=2000)
     budget: Decimal = Field(gt=0, decimal_places=7)
     asset: str = "XLM"
     deadline: str | None = None
@@ -41,7 +50,7 @@ class InvitationCreate(BaseModel):
 
 class MilestoneCreate(BaseModel):
     title: str = Field(min_length=3, max_length=255)
-    description: str = ""
+    description: str = Field(default="", max_length=5000)
     amount: Decimal = Field(gt=0, decimal_places=7)
     due_date: str | None = None
 
@@ -50,8 +59,8 @@ class AgreementCreate(BaseModel):
     freelancer_id: str
     amount: Decimal = Field(gt=0, decimal_places=7)
     asset: str = "XLM"
-    description: str = Field(min_length=10)
-    milestones: list[MilestoneCreate]
+    description: str = Field(min_length=10, max_length=10000)
+    milestones: list[MilestoneCreate] = Field(min_length=1, max_length=50)
 
     @field_validator("asset")
     @classmethod
@@ -62,24 +71,29 @@ class AgreementCreate(BaseModel):
 
 
 class MilestoneUpdate(BaseModel):
-    deliverable_url: str | None = None
-    feedback: str | None = None
+    deliverable_url: str | None = Field(default=None, max_length=1000)
+    feedback: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("deliverable_url")
+    @classmethod
+    def validate_deliverable_url(cls, value: str | None) -> str | None:
+        return http_url(value) if value else value
 
 
 class ProfileUpdate(BaseModel):
     full_name: str | None = Field(default=None, min_length=2, max_length=255)
     stellar_address: str | None = Field(default=None, min_length=56, max_length=56)
-    title: str | None = None
-    description: str | None = None
+    title: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=5000)
     hourly_rate: Decimal | None = Field(default=None, gt=0)
-    skills: str | None = None
+    skills: str | None = Field(default=None, max_length=2000)
     project_rate: Decimal | None = Field(default=None, gt=0)
 
 
 class ProjectUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=3, max_length=255)
-    description: str | None = Field(default=None, min_length=10)
-    required_skills: str | None = None
+    description: str | None = Field(default=None, min_length=10, max_length=10000)
+    required_skills: str | None = Field(default=None, max_length=2000)
     budget: Decimal | None = Field(default=None, gt=0, decimal_places=7)
     deadline: str | None = None
 
@@ -97,15 +111,13 @@ class PortfolioCreate(BaseModel):
     @field_validator("url")
     @classmethod
     def validate_url(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("url must start with http:// or https://")
-        return value
+        return http_url(value)
 
 
 class AgreementRevisionCreate(BaseModel):
     amount: Decimal = Field(gt=0, decimal_places=7)
-    description: str = Field(min_length=10)
-    milestones: list[MilestoneCreate]
+    description: str = Field(min_length=10, max_length=10000)
+    milestones: list[MilestoneCreate] = Field(min_length=1, max_length=50)
     change_note: str = Field(default="", max_length=500)
 
 
@@ -127,9 +139,7 @@ class DisputeCreate(BaseModel):
     @field_validator("evidence_url")
     @classmethod
     def validate_evidence_url(cls, value: str | None) -> str | None:
-        if value is not None and not value.startswith(("http://", "https://")):
-            raise ValueError("evidence_url must start with http:// or https://")
-        return value
+        return http_url(value) if value else value
 
 
 class DisputeEvidence(BaseModel):
@@ -139,9 +149,7 @@ class DisputeEvidence(BaseModel):
     @field_validator("evidence_url")
     @classmethod
     def validate_evidence_url(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("evidence_url must start with http:// or https://")
-        return value
+        return http_url(value)
 
 
 class DisputeResolution(BaseModel):
