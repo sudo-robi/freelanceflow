@@ -21,8 +21,9 @@
 3. The source account and base fee are loaded from Horizon; `TransactionBuilder` creates a payment operation with `Asset.native()`, the exact amount, and `Memo.text(intent.memo)`.
 4. Freighter `signTransaction(xdr, { networkPassphrase })` produces a signed XDR; a user rejection or any API error aborts with no submission.
 5. `Horizon.Server.submitTransaction` sends the real transaction; the returned hash goes to `POST /api/payments/{hash}/confirm`.
-6. Backend confirmation independently fetches Horizon data and requires: successful transaction, registered client source, registered freelancer destination, native asset, exact milestone amount, no open dispute, approved milestone, and matching memo when an intent exists.
-7. Only then are a unique `PaymentRecord`, invoice, notifications, and audit events written.
+6. Backend confirmation first reads the live network passphrase from Soroban RPC `getNetwork` and refuses to continue unless it equals `Test SDF Network ; September 2015`. The value is cached for `PASSPHRASE_CACHE_TTL` seconds (default 300).
+7. Backend confirmation independently fetches Horizon data with bounded retries (`HORIZON_VERIFY_ATTEMPTS`, default 2; `HORIZON_RETRY_DELAY`, default 0.25s) and requires: successful transaction, registered client source, registered freelancer destination, native asset, exact milestone amount, no open dispute, approved milestone, and matching memo when an intent exists.
+8. Only then are a unique `PaymentRecord`, invoice, notifications, and audit events written.
 
 ## Security properties
 
