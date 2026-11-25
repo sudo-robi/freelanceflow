@@ -46,7 +46,7 @@ from .schemas import (
     RegisterRequest,
     SessionResponse,
 )
-from .stellar import get_testnet_account, get_transaction
+from .stellar import TESTNET_PASSPHRASE, get_network_passphrase, get_testnet_account, get_transaction
 from .routers import agreements, dashboard, disputes, finance, milestones, projects, stellar
 
 logger = logging.getLogger("freelanceflow")
@@ -559,6 +559,15 @@ async def confirm_payment(
             or Decimal(str(intent.amount)) != Decimal(str(milestone.amount))
         ):
             raise HTTPException(status_code=422, detail="Payment intent does not match this milestone and parties")
+
+    try:
+        live_passphrase = await get_network_passphrase()
+    except Exception as error:
+        logger.warning("Network passphrase lookup failed: %s", type(error).__name__)
+        raise HTTPException(status_code=502, detail="Upstream verification unavailable") from error
+    if live_passphrase != TESTNET_PASSPHRASE:
+        logger.error("Network passphrase mismatch; refusing payment confirmation")
+        raise HTTPException(status_code=502, detail="Upstream verification unavailable")
 
     try:
         transaction = await get_transaction(transaction_hash)
