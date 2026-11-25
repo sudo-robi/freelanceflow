@@ -73,6 +73,23 @@ def ensure_schema() -> None:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
     _enforce_payment_integrity(engine)
     _add_missing_indexes(engine)
+    _cleanup_expired_sessions()
+
+
+def _cleanup_expired_sessions() -> None:
+    """Remove expired sessions at startup instead of waiting for them to be used."""
+    from datetime import datetime
+
+    from sqlalchemy.orm import sessionmaker
+
+    from .models import Session as SessionModel
+
+    db = sessionmaker(bind=engine)()
+    try:
+        db.query(SessionModel).filter(SessionModel.expires_at < datetime.utcnow()).delete()
+        db.commit()
+    finally:
+        db.close()
 
 
 def _enforce_payment_integrity(engine) -> None:
