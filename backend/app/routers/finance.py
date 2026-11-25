@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
 from ..database import get_db
+from ..ratelimit import rate_limit
 from ..models import (
     AgreementMilestone,
     Invoice,
@@ -25,8 +26,10 @@ from ..services import (
     assert_not_disputed,
     audit,
     is_stellar_address,
+    lock_row,
     payment_totals,
     require_client,
+    require_stellar_address,
     serialize_datetime,
     to_float,
 )
@@ -93,9 +96,10 @@ def create_payment_intent(
     payload: PaymentIntentCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("payment_intent", 20, 60)),
 ):
     require_client(user)
-    milestone = db.get(AgreementMilestone, payload.milestone_id)
+    milestone = lock_row(db, AgreementMilestone, payload.milestone_id)
     if not milestone:
         raise HTTPException(status_code=404, detail="Milestone not found")
     agreement = db.get(WorkAgreement, milestone.agreement_id)
@@ -108,8 +112,8 @@ def create_payment_intent(
         raise HTTPException(status_code=409, detail="Milestone is already paid")
     client = db.get(User, agreement.client_id)
     freelancer = db.get(User, agreement.freelancer_id)
-    if not is_stellar_address(client.stellar_address) or not is_stellar_address(freelancer.stellar_address):
-        raise HTTPException(status_code=422, detail="Both parties must set valid Stellar public addresses")
+    require_stellar_address(client.stellar_address, "client stellar_address")
+    require_stellar_address(freelancer.stellar_address, "freelancer stellar_address")
     memo = payload.memo or uuid.uuid4().hex[:24]
     if len(memo) > 28 or db.query(PaymentIntent).filter(PaymentIntent.memo == memo).first():
         raise HTTPException(status_code=409, detail="Payment memo is invalid or already in use")
@@ -189,12 +193,18 @@ def export_payments_csv(user: User = Depends(get_current_user), db: Session = De
         "payment_id", "transaction_hash", "status", "network", "asset", "amount",
         "ledger", "confirmed_at", "source_account", "destination_account", "memo",
     ])
+    def safe(value) -> str:
+        text = "" if value is None else str(value)
+        return "'" + text if text[:1] in {"=", "+", "-", "@"} else text
+
     for payment in _owned_payments(db, user):
         writer.writerow([
-            payment.id, payment.transaction_hash, payment.status, payment.network,
-            payment.asset, to_float(payment.amount), payment.ledger,
-            serialize_datetime(payment.confirmed_at) or "", payment.source_account,
-            payment.destination_account, payment.memo or "",
+            safe(value) for value in [
+                payment.id, payment.transaction_hash, payment.status, payment.network,
+                payment.asset, to_float(payment.amount), payment.ledger,
+                serialize_datetime(payment.confirmed_at) or "", payment.source_account,
+                payment.destination_account, payment.memo or "",
+            ]
         ])
     return Response(
         content=output.getvalue(),

@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -153,6 +153,16 @@ class AgreementMilestone(Base):
 
 class PaymentRecord(Base):
     __tablename__ = "payment_records"
+    __table_args__ = (
+        Index(
+            "uq_confirmed_milestone_payment",
+            "milestone_id",
+            unique=True,
+            sqlite_where=text("status = 'confirmed'"),
+            postgresql_where=text("status = 'confirmed'"),
+        ),
+        Index("ix_payment_status_created", "status", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     agreement_id: Mapped[str] = mapped_column(ForeignKey("work_agreements.id", ondelete="CASCADE"), index=True)
@@ -173,6 +183,7 @@ class PaymentRecord(Base):
 
 class Notification(Base):
     __tablename__ = "notifications"
+    __table_args__ = (Index("ix_notification_user_read", "user_id", "read"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -187,6 +198,7 @@ class Notification(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_entity", "entity_type", "entity_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     actor_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -201,6 +213,7 @@ class PaymentIntent(Base):
     """Client-created payment request that binds an on-chain payment to a milestone."""
 
     __tablename__ = "payment_intents"
+    __table_args__ = (Index("ix_intent_milestone_status", "milestone_id", "status"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     milestone_id: Mapped[str] = mapped_column(ForeignKey("agreement_milestones.id", ondelete="CASCADE"), index=True)
@@ -232,8 +245,11 @@ class Dispute(Base):
     resolution: Mapped[str | None] = mapped_column(String(40), nullable=True)
     resolved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     proposed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    proposal_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (Index("ix_dispute_agreement_status", "agreement_id", "status"),)
 
 
 class DisputeEvent(Base):

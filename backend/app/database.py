@@ -47,6 +47,7 @@ _ADDED_COLUMNS = {
         "reviewed_at": "DATETIME",
     },
     "payment_records": {"intent_id": "VARCHAR(36)", "memo": "VARCHAR(28)"},
+    "disputes": {"proposal_version": "INTEGER DEFAULT 0"},
     "notifications": {
         "category": "VARCHAR(40) DEFAULT 'general'",
         "entity_type": "VARCHAR(40)",
@@ -70,3 +71,63 @@ def ensure_schema() -> None:
             if name not in existing:
                 with engine.begin() as connection:
                     connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+    _enforce_payment_integrity(engine)
+    _add_missing_indexes(engine)
+
+
+def _enforce_payment_integrity(engine) -> None:
+    """Create the confirmed-per-milestone unique index after checking existing data."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "payment_records" not in inspector.get_table_names():
+        return
+    with engine.connect() as connection:
+        duplicates = connection.execute(text(
+            "SELECT milestone_id, COUNT(*) AS c FROM payment_records "
+            "WHERE status = 'confirmed' GROUP BY milestone_id HAVING c > 1"
+        )).all()
+    if duplicates:
+        raise RuntimeError(
+            "Refusing to migrate: existing confirmed duplicate payments for milestone(s) "
+            + ", ".join(str(row[0]) for row in duplicates[:10])
+            + ". Reconcile financial records manually before starting the application."
+        )
+    existing = {item["name"] for item in inspector.get_indexes("payment_records")}
+    if "uq_confirmed_milestone_payment" not in existing:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX uq_confirmed_milestone_payment "
+                "ON payment_records(milestone_id) WHERE status = 'confirmed'"
+            ))
+
+
+def _add_missing_indexes(engine) -> None:
+    """Add indexes introduced after the initial release to existing tables."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    wanted = {
+        "notifications": ["ix_notification_user_read"],
+        "audit_logs": ["ix_audit_entity"],
+        "payment_intents": ["ix_intent_milestone_status"],
+        "disputes": ["ix_dispute_agreement_status"],
+        "payment_records": ["ix_payment_status_created"],
+    }
+    columns = {
+        "ix_notification_user_read": ("notifications", "(user_id, read)"),
+        "ix_audit_entity": ("audit_logs", "(entity_type, entity_id)"),
+        "ix_intent_milestone_status": ("payment_intents", "(milestone_id, status)"),
+        "ix_dispute_agreement_status": ("disputes", "(agreement_id, status)"),
+        "ix_payment_status_created": ("payment_records", "(status, created_at)"),
+    }
+    tables = set(inspector.get_table_names())
+    for table, names in wanted.items():
+        if table not in tables:
+            continue
+        existing = {item["name"] for item in inspector.get_indexes(table)}
+        for name in names:
+            if name not in existing:
+                _, expression = columns[name]
+                with engine.begin() as connection:
+                    connection.execute(text(f"CREATE INDEX {name} ON {table} {expression}"))
