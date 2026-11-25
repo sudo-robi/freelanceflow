@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import logging
-
 import os
+import time
+import uuid
 
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -69,6 +70,24 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def request_context(request, call_next):
+    request_id = uuid.uuid4().hex[:16]
+    request.state.request_id = request_id
+    started = time.monotonic()
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "request completed method=%s path=%s status=%s duration_ms=%.1f request_id=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        (time.monotonic() - started) * 1000,
+        request_id,
+    )
+    return response
+
+
+@app.middleware("http")
 async def security_headers(request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -124,6 +143,8 @@ def login(
 ):
     user = db.query(User).filter(User.email == payload.email.lower()).first()
     if not user or not verify_password(payload.password, user.password_hash):
+        audit(db, None, "auth", "login_failed", "invalid_credentials")
+        db.commit()
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return SessionResponse(token=create_session(db, user.id), role=user.role)
 
