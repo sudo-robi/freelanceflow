@@ -59,6 +59,17 @@ GitHub Actions workflows live in `.github/workflows/`:
 
 Locally: `cd frontend && npm run test:e2e` starts an isolated backend on port 8011 and the production frontend on port 3011 with `API_BACKEND_URL=http://127.0.0.1:8011`. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use a non-standard Chromium binary. Browser and funded-wallet checks require separate credentials and are not part of credential-free CI.
 
-Startup calls `ensure_schema()`, which creates missing tables and adds missing columns to an existing database without dropping data. Set `DATABASE_URL` to the same persistent volume across redeploys.
+Startup calls `ensure_schema()`, which creates missing tables, adds missing columns, removes expired sessions, and creates missing indexes without dropping data. Set `DATABASE_URL` to the same persistent volume across redeploys.
+
+Docker Compose now defines healthchecks for the database, API and web services, `restart: unless-stopped`, and dependency conditions so the API starts only after the database is healthy.
+
+Backup and restore procedures:
+
+```bash
+DATABASE_URL=... ./scripts/backup.sh       # writes a timestamped backup to ./backups
+DATABASE_URL=... ./scripts/restore.sh <file>
+```
+
+Application dependencies are pinned exactly in `backend/pyproject.toml` and `frontend/package.json`, with `package-lock.json` providing deterministic frontend installs.
 
 The Soroban escrow contract is deployed and verified on the configured network as `CA5FBQ4VEJ4ZXGVDVMAGRP6JKEB7AGUUG5ZR3NYSNG3A6XFUUVCL37CI` (WASM hash `906f98af2a1ae3bb8a816ea65bab35b130c3f4ab02d1ba40335a8ca1eb9b527a`). It is not currently invoked by the API; see SMART_CONTRACT_REVIEW.md for transaction evidence.
