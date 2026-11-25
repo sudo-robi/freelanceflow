@@ -22,8 +22,10 @@ from ..models import (
 from ..schemas import AgreementRevisionCreate
 from ..services import (
     assert_not_disputed,
+    assert_transition,
     audit,
     get_agreement_for_user,
+    lock_row,
     notify,
     serialize_datetime,
     to_float,
@@ -91,10 +93,12 @@ def reject_agreement(
     db: Session = Depends(get_db),
 ):
     agreement = get_agreement_for_user(db, agreement_id, user)
+    agreement = lock_row(db, WorkAgreement, agreement.id) or agreement
     if user.id != agreement.freelancer_id:
         raise HTTPException(status_code=403, detail="Only the freelancer can reject an agreement")
     if agreement.status != "pending_acceptance":
         raise HTTPException(status_code=409, detail="Agreement is not awaiting acceptance")
+    assert_transition("agreement", agreement.status, "cancelled")
     agreement.status = "cancelled"
     project = db.get(Project, agreement.project_id)
     if project and project.status == "awaiting_agreement":
@@ -112,6 +116,7 @@ def cancel_agreement(
     db: Session = Depends(get_db),
 ):
     agreement = get_agreement_for_user(db, agreement_id, user)
+    agreement = lock_row(db, WorkAgreement, agreement.id) or agreement
     if agreement.status == "cancelled":
         raise HTTPException(status_code=409, detail="Agreement is already cancelled")
     assert_not_disputed(db, agreement.id)
@@ -120,6 +125,7 @@ def cancel_agreement(
         PaymentRecord.status == "confirmed",
     ).first():
         raise HTTPException(status_code=409, detail="Agreement with confirmed payments cannot be cancelled")
+    assert_transition("agreement", agreement.status, "cancelled")
     agreement.status = "cancelled"
     project = db.get(Project, agreement.project_id)
     if project and project.status not in {"completed", "cancelled", "disputed"}:

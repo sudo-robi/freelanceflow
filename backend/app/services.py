@@ -25,6 +25,39 @@ from .models import (
 PUBLIC_KEY = re.compile(r"G[A-Z2-7]{55}")
 OPEN_DISPUTE_STATUSES = {"open", "under_review", "awaiting_counterparty"}
 
+# Explicit state machines. Terminal states have no outgoing transitions unless
+# an authorised, audited workflow (such as dispute resolution) says otherwise.
+AGREEMENT_TRANSITIONS = {
+    "draft": {"pending_acceptance", "cancelled"},
+    "pending_acceptance": {"active", "cancelled", "disputed"},
+    "active": {"under_review", "cancelled", "disputed", "completed"},
+    "under_review": {"active", "cancelled", "disputed", "completed"},
+    "completed": set(),
+    "cancelled": set(),
+    "disputed": {"active", "cancelled"},
+}
+DISPUTE_TRANSITIONS = {
+    "open": {"under_review", "awaiting_counterparty", "rejected"},
+    "under_review": {"awaiting_counterparty", "rejected"},
+    "awaiting_counterparty": {"resolved", "rejected", "open"},
+    "resolved": set(),
+    "rejected": set(),
+}
+
+
+def assert_transition(entity: str, current: str, target: str) -> None:
+    allowed = (AGREEMENT_TRANSITIONS if entity == "agreement" else DISPUTE_TRANSITIONS).get(current, set())
+    if target not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Invalid {entity} state transition: {current} -> {target}",
+        )
+
+
+def lock_row(db: Session, model, record_id: str):
+    """Lock a row for the duration of the current transaction where supported."""
+    return db.query(model).filter(model.id == record_id).with_for_update().first()
+
 
 def as_decimal(value) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(str(value))

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+import logging
 
 import os
 
@@ -9,7 +10,18 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from .auth import bearer, create_session, get_current_user, hash_password, verify_password
-from .services import assert_not_disputed, audit, is_stellar_address, notify, serialize_datetime, to_float
+from .ratelimit import rate_limit
+from .services import (
+    assert_not_disputed,
+    assert_transition,
+    audit,
+    is_stellar_address,
+    lock_row,
+    notify,
+    require_stellar_address,
+    serialize_datetime,
+    to_float,
+)
 from .database import Base, engine, ensure_schema, get_db
 from .models import (
     AgreementMilestone,
@@ -37,7 +49,8 @@ from .schemas import (
 from .stellar import get_testnet_account, get_transaction
 from .routers import agreements, dashboard, disputes, finance, milestones, projects, stellar
 
-app = FastAPI(title="FreelanceFlow API", version="0.2.0")
+logger = logging.getLogger("freelanceflow")
+app = FastAPI(title="FreelanceFlow API", version="0.3.0")
 cors_origins = [
     origin.strip()
     for origin in os.getenv(
@@ -50,8 +63,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -76,7 +89,11 @@ def health() -> dict:
 
 
 @app.post("/api/auth/register", response_model=SessionResponse)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+def register(
+    payload: RegisterRequest,
+    db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("register", 10, 60)),
+):
     if db.query(User).filter(User.email == payload.email.lower()).first():
         raise HTTPException(status_code=409, detail="Email already registered")
     try:
@@ -100,7 +117,11 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/api/auth/login", response_model=SessionResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("login", 10, 60)),
+):
     user = db.query(User).filter(User.email == payload.email.lower()).first()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -119,6 +140,18 @@ def logout(
         db.query(SessionModel).filter(SessionModel.token == credentials.credentials).delete()
         db.commit()
     return {"status": "logged_out"}
+
+
+@app.post("/api/auth/logout-all")
+def logout_all(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Revoke every session belonging to the current user."""
+    from .models import Session as SessionModel
+
+    deleted = db.query(SessionModel).filter(SessionModel.user_id == user.id).delete()
+    db.commit()
+    audit(db, user.id, "session", user.id, "revoked_all", str(deleted))
+    db.commit()
+    return {"revoked": deleted}
 
 
 @app.get("/api/me")
@@ -143,9 +176,7 @@ def update_me(payload: ProfileUpdate, user: User = Depends(get_current_user), db
     if payload.full_name is not None:
         user.full_name = payload.full_name
     if payload.stellar_address is not None:
-        if not (payload.stellar_address.startswith("G") and len(payload.stellar_address) == 56):
-            raise HTTPException(status_code=422, detail="Invalid Stellar public address")
-        user.stellar_address = payload.stellar_address
+        user.stellar_address = require_stellar_address(payload.stellar_address, "stellar_address")
     if user.role == "freelancer":
         profile = db.query(FreelancerProfile).filter(FreelancerProfile.user_id == user.id).first()
         if not profile:
@@ -331,24 +362,51 @@ def create_agreement(project_id: str, payload: AgreementCreate, user: User = Dep
 
 @app.post("/api/agreements/{agreement_id}/accept")
 def accept_agreement(agreement_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    agreement = db.get(WorkAgreement, agreement_id)
+    """Idempotent acceptance with explicit, atomic state transitions."""
+    agreement = lock_row(db, WorkAgreement, agreement_id)
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
-    if user.id == agreement.client_id:
-        agreement.client_accepted = True
-    elif user.id == agreement.freelancer_id:
-        agreement.freelancer_accepted = True
-    else:
+    is_client = user.id == agreement.client_id
+    is_freelancer = user.id == agreement.freelancer_id
+    if not is_client and not is_freelancer:
         raise HTTPException(status_code=403, detail="Not authorized")
-    audit(db, user.id, "agreement", agreement_id, "accepted_by_client" if user.id == agreement.client_id else "accepted_by_freelancer")
-    if agreement.client_accepted and agreement.freelancer_accepted:
-        agreement.status = "active"
+
+    # Re-reading inside the lock prevents stale concurrent acceptance from
+    # mutating a terminal agreement.
+    if agreement.status == "active" and agreement.client_accepted and agreement.freelancer_accepted:
+        return {
+            "status": agreement.status,
+            "client_accepted": agreement.client_accepted,
+            "freelancer_accepted": agreement.freelancer_accepted,
+            "idempotent": True,
+        }
+    if agreement.status != "pending_acceptance":
+        raise HTTPException(status_code=409, detail=f"Invalid agreement state transition from {agreement.status}")
+    already = agreement.client_accepted if is_client else agreement.freelancer_accepted
+    if already:
+        return {
+            "status": agreement.status,
+            "client_accepted": agreement.client_accepted,
+            "freelancer_accepted": agreement.freelancer_accepted,
+            "idempotent": True,
+        }
+
+    if is_client:
+        agreement.client_accepted = True
+    else:
+        agreement.freelancer_accepted = True
+    target = "active" if agreement.client_accepted and agreement.freelancer_accepted else "pending_acceptance"
+    if target != agreement.status:
+        assert_transition("agreement", agreement.status, target)
+        agreement.status = target
+    audit(db, user.id, "agreement", agreement_id, "accepted_by_client" if is_client else "accepted_by_freelancer")
+    if target == "active":
         project = db.get(Project, agreement.project_id)
         project.status = "active"
-        counterparty = agreement.freelancer_id if user.id == agreement.client_id else agreement.client_id
+        counterparty = agreement.freelancer_id if is_client else agreement.client_id
         notify(db, counterparty, "Agreement active", f"The agreement for {project.title} is now active.", "agreement", "agreement", agreement_id)
     else:
-        counterparty = agreement.freelancer_id if user.id == agreement.client_id else agreement.client_id
+        counterparty = agreement.freelancer_id if is_client else agreement.client_id
         notify(db, counterparty, "Agreement accepted", f"{user.full_name} accepted the agreement; awaiting the other party.", "agreement", "agreement", agreement_id)
     db.commit()
     return {"status": agreement.status, "client_accepted": agreement.client_accepted, "freelancer_accepted": agreement.freelancer_accepted}
@@ -416,13 +474,19 @@ def review_milestone(milestone_id: str, payload: MilestoneUpdate, approved: bool
 
 
 @app.get("/api/payments/{transaction_hash}/verify")
-async def verify_transaction(transaction_hash: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if len(transaction_hash) != 64:
+async def verify_transaction(
+    transaction_hash: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("payment_verify", 30, 60)),
+):
+    if len(transaction_hash) != 64 or any(character not in "0123456789abcdef" for character in transaction_hash.lower()):
         raise HTTPException(status_code=422, detail="Invalid Stellar transaction hash")
     try:
         result = await get_transaction(transaction_hash)
     except Exception as error:
-        raise HTTPException(status_code=502, detail=f"Horizon verification failed: {error}") from error
+        logger.warning("Horizon verification failed for %s: %s", transaction_hash, type(error).__name__)
+        raise HTTPException(status_code=502, detail="Upstream verification unavailable") from error
     if not result.get("successful"):
         raise HTTPException(status_code=404, detail="Transaction not found or not successful")
     return result
@@ -435,6 +499,7 @@ async def confirm_payment(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     intent_id: str | None = None,
+    _limit: None = Depends(rate_limit("payment_confirm", 20, 60)),
 ):
     """Confirm a payment only after independent Stellar Testnet verification.
 
@@ -445,8 +510,8 @@ async def confirm_payment(
 
     if len(transaction_hash) != 64 or any(character not in "0123456789abcdef" for character in transaction_hash.lower()):
         raise HTTPException(status_code=422, detail="Invalid Stellar transaction hash")
-    milestone = db.get(AgreementMilestone, milestone_id)
-    agreement = db.get(WorkAgreement, milestone.agreement_id) if milestone else None
+    milestone = lock_row(db, AgreementMilestone, milestone_id)
+    agreement = lock_row(db, WorkAgreement, milestone.agreement_id) if milestone else None
     if not agreement:
         raise HTTPException(status_code=404, detail="Milestone not found")
     if user.id != agreement.client_id:
@@ -469,8 +534,8 @@ async def confirm_payment(
         raise HTTPException(status_code=409, detail="Milestone is not approved")
     client = db.get(User, agreement.client_id)
     freelancer = db.get(User, agreement.freelancer_id)
-    if not is_stellar_address(client.stellar_address) or not is_stellar_address(freelancer.stellar_address):
-        raise HTTPException(status_code=422, detail="Both parties must set valid Stellar public addresses")
+    require_stellar_address(client.stellar_address, "client stellar_address")
+    require_stellar_address(freelancer.stellar_address, "freelancer stellar_address")
 
     intent = db.get(PaymentIntent, intent_id) if intent_id else None
     if intent_id and (not intent or intent.client_id != user.id or intent.milestone_id != milestone.id):
@@ -484,13 +549,22 @@ async def confirm_payment(
     if intent:
         if intent.status != "pending" or intent.expires_at < datetime.utcnow():
             raise HTTPException(status_code=409, detail="Payment intent is no longer valid")
-        if Decimal(str(intent.amount)) != Decimal(str(milestone.amount)):
-            raise HTTPException(status_code=422, detail="Payment intent amount does not match the milestone")
+        if (
+            intent.agreement_id != agreement.id
+            or intent.freelancer_id != freelancer.id
+            or intent.expected_source != client.stellar_address
+            or intent.expected_destination != freelancer.stellar_address
+            or intent.asset != agreement.asset
+            or intent.network != "testnet"
+            or Decimal(str(intent.amount)) != Decimal(str(milestone.amount))
+        ):
+            raise HTTPException(status_code=422, detail="Payment intent does not match this milestone and parties")
 
     try:
         transaction = await get_transaction(transaction_hash)
     except Exception as error:
-        raise HTTPException(status_code=502, detail=f"Horizon verification failed: {error}") from error
+        logger.warning("Horizon verification failed for %s: %s", transaction_hash, type(error).__name__)
+        raise HTTPException(status_code=502, detail="Upstream verification unavailable") from error
     if not transaction.get("found") or not transaction.get("successful"):
         raise HTTPException(status_code=409, detail="Transaction was not found or was not successful")
     if transaction.get("source_account") != client.stellar_address:
@@ -553,13 +627,17 @@ async def confirm_payment(
 
 
 @app.get("/api/stellar/account/{address}")
-async def stellar_account(address: str):
-    if len(address) != 56:
-        raise HTTPException(status_code=422, detail="Invalid Stellar public address")
+async def stellar_account(
+    address: str,
+    user: User = Depends(get_current_user),
+    _limit: None = Depends(rate_limit("stellar_account", 30, 60)),
+):
+    require_stellar_address(address, "address")
     try:
         return await get_testnet_account(address)
     except Exception as error:
-        raise HTTPException(status_code=502, detail=f"Horizon account lookup failed: {error}") from error
+        logger.warning("Horizon account lookup failed: %s", type(error).__name__)
+        raise HTTPException(status_code=502, detail="Upstream account lookup unavailable") from error
 
 
 @app.get("/api/notifications")

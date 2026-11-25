@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
@@ -17,6 +18,7 @@ from ..models import (
     User,
     WorkAgreement,
 )
+from ..ratelimit import rate_limit
 from ..schemas import AvailabilityUpdate, PortfolioCreate, ProjectUpdate
 from ..services import (
     audit,
@@ -60,8 +62,19 @@ def search_freelancers(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("freelancer_search", 60, 60)),
 ):
-    query = db.query(FreelancerProfile)
+    counts = db.query(
+        PortfolioItem.freelancer_id.label("freelancer_id"),
+        func.count(PortfolioItem.id).label("item_count"),
+    ).group_by(PortfolioItem.freelancer_id).subquery()
+    query = db.query(
+        FreelancerProfile,
+        User,
+        func.coalesce(counts.c.item_count, 0).label("portfolio_count"),
+    ).join(User, User.id == FreelancerProfile.user_id).outerjoin(
+        counts, counts.c.freelancer_id == FreelancerProfile.user_id
+    )
     term = skill.strip().lower()
     if term:
         query = query.filter(
@@ -79,8 +92,22 @@ def search_freelancers(
         query = query.order_by(FreelancerProfile.hourly_rate.asc(), FreelancerProfile.id.asc())
     else:
         query = query.order_by(FreelancerProfile.id.asc())
-    profiles = query.offset(offset).limit(limit).all()
-    return [_freelancer_card(db, profile) for profile in profiles]
+    rows = query.offset(offset).limit(limit).all()
+    return [
+        {
+            "id": user.id,
+            "full_name": user.full_name,
+            "title": profile.title,
+            "description": profile.description,
+            "skills": profile.skills,
+            "hourly_rate": to_float(profile.hourly_rate) if profile.hourly_rate is not None else None,
+            "project_rate": to_float(profile.project_rate) if profile.project_rate is not None else None,
+            "available": bool(profile.available),
+            "availability_note": profile.availability_note,
+            "portfolio_count": int(portfolio_count),
+        }
+        for profile, user, portfolio_count in rows
+    ]
 
 
 @router.get("/freelancers/{freelancer_id}")
@@ -283,11 +310,16 @@ def list_invitations(
             db.query(Project.id).filter(Project.client_id == user.id)
         ))
     invitations = query.order_by(ProjectInvitation.created_at.desc()).all()
+    project_ids = {item.project_id for item in invitations}
+    titles = {
+        row.id: row.title
+        for row in db.query(Project.id, Project.title).filter(Project.id.in_(project_ids)).all()
+    } if project_ids else {}
     return [
         {
             "id": item.id,
             "project_id": item.project_id,
-            "project_title": db.get(Project, item.project_id).title if db.get(Project, item.project_id) else None,
+            "project_title": titles.get(item.project_id),
             "status": item.status,
             "created_at": serialize_datetime(item.created_at),
             "expires_at": serialize_datetime(item.expires_at),
