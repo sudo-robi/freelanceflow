@@ -2,6 +2,10 @@
 
 FreelanceFlow is a two-sided freelancer agreement and milestone payment platform on Stellar. Payments are never simulated: the browser builds a real transaction from a backend payment intent, Freighter signs it, Horizon receives it, and the backend independently verifies it before any payment record, invoice, or earnings figure exists.
 
+## Live demo
+
+**[https://freelanceflow-stellar.vercel.app](https://freelanceflow-stellar.vercel.app)** — hosted on Vercel (Next.js frontend + serverless FastAPI) with Neon Postgres. Runs on Stellar Testnet only; no real funds are used. API: [https://freelanceflow-api.vercel.app](https://freelanceflow-api.vercel.app).
+
 ## Implemented
 
 - FastAPI registration, login, logout, PBKDF2 password hashing, bearer sessions, role separation.
