@@ -15,7 +15,7 @@ case "$DATABASE_URL" in
     echo "$BACKUP_DIR/freelanceflow-$STAMP.dump"
     ;;
   sqlite:///*)
-    SOURCE="${DATABASE_URL#sqlite://}"
+    SOURCE="${DATABASE_URL#sqlite:///}"
     python3 - "$SOURCE" "$BACKUP_DIR/freelanceflow-$STAMP.db" <<'PY'
 import sqlite3, sys
 source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)

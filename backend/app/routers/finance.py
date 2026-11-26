@@ -4,6 +4,7 @@ import csv
 import io
 import uuid
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from ..models import (
 )
 from ..pdf import simple_pdf
 from ..schemas import PaymentIntentCreate
+from ..stellar import get_transaction
 from ..services import (
     assert_not_disputed,
     audit,
@@ -182,6 +184,68 @@ def payment_summary(user: User = Depends(get_current_user), db: Session = Depend
         **totals,
         "verified_count": totals["confirmed_count"],
         "verified_amount": totals["confirmed_amount"],
+    }
+
+
+@router.get("/payments/reconcile")
+async def reconcile_payments(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    _limit: None = Depends(rate_limit("payment_reconcile", 10, 60)),
+):
+    """Independently re-check confirmed payments against Horizon.
+
+    Read-only: never rewrites or deletes financial records. Returns per-payment
+    verification status so operators can investigate divergence.
+    """
+    results = []
+    for payment in _owned_payments(db, user):
+        try:
+            transaction = await get_transaction(payment.transaction_hash)
+        except Exception:
+            results.append({
+                "payment_id": payment.id,
+                "transaction_hash": payment.transaction_hash,
+                "status": "unavailable",
+                "detail": "Horizon lookup failed",
+            })
+            continue
+        if not transaction.get("found") or not transaction.get("successful"):
+            results.append({
+                "payment_id": payment.id,
+                "transaction_hash": payment.transaction_hash,
+                "status": "mismatch",
+                "detail": "Transaction not found or unsuccessful on Testnet",
+            })
+            continue
+        matching = False
+        try:
+            expected = Decimal(str(payment.amount))
+            matching = any(
+                operation.get("type") in {"payment", "path_payment_strict_send", "path_payment_strict_receive"}
+                and operation.get("from") == payment.source_account
+                and operation.get("to") == payment.destination_account
+                and operation.get("asset_type") == "native"
+                and Decimal(operation["amount"]) == expected
+                for operation in transaction.get("operations", [])
+            ) and transaction.get("source_account") == payment.source_account
+            if payment.memo:
+                matching = matching and str(transaction.get("memo") or "") == payment.memo
+        except (InvalidOperation, KeyError, TypeError):
+            matching = False
+        results.append({
+            "payment_id": payment.id,
+            "transaction_hash": payment.transaction_hash,
+            "status": "verified" if matching else "mismatch",
+            "detail": "Matches stored payment record" if matching else "Stored record does not match Horizon data",
+            "ledger": transaction.get("ledger"),
+        })
+    return {
+        "checked": len(results),
+        "verified": sum(1 for item in results if item["status"] == "verified"),
+        "mismatches": sum(1 for item in results if item["status"] == "mismatch"),
+        "unavailable": sum(1 for item in results if item["status"] == "unavailable"),
+        "results": results,
     }
 
 

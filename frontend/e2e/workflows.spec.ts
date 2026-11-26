@@ -67,6 +67,34 @@ test("freelancer directory shows real profile data and portfolio", async ({ page
   await expect(page.getByText(id.slice(0, 8))).toHaveCount(0);
 });
 
+test("all workspace routes render without console errors or horizontal overflow", async ({ page, request }) => {
+  const observer = await register(request, "client", "e2e-route-observer");
+  await authenticate(page, observer);
+  const consoleErrors: string[] = [];
+  const failedResponses: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" && !message.text().includes("404")) consoleErrors.push(message.text());
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`);
+  });
+
+  for (const path of [
+    "/dashboard", "/projects", "/directory", "/wallet",
+    "/payments", "/disputes", "/notifications", "/profile",
+  ]) {
+    await page.goto(path);
+    await expect(page.locator("main")).toBeVisible();
+    const overflow = await page.evaluate(() =>
+      document.documentElement.scrollWidth > window.innerWidth + 1,
+    );
+    expect(overflow, `${path} overflows horizontally`).toBe(false);
+  }
+  // The browser's automatic /favicon.ico request is cosmetic and has no product impact.
+  expect(failedResponses.filter((entry) => !entry.includes("/favicon.ico"))).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+});
+
 test("opening a dispute through the UI freezes the workflow", async ({ page, request }) => {
   const client = await register(request, "client", "e2e-dispute-client");
   const freelancer = await register(request, "freelancer", "e2e-dispute-free");
