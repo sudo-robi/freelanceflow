@@ -131,6 +131,10 @@ class WorkAgreement(Base):
     client_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     freelancer_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     escrow_contract_id: Mapped[str | None] = mapped_column(String(56), nullable=True)
+    escrow_agreement_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    escrow_status: Mapped[str] = mapped_column(String(24), default="not_initialized")
+    escrow_transaction_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    escrow_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

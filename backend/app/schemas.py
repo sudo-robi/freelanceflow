@@ -139,6 +139,18 @@ class MilestoneListUpdate(BaseModel):
     milestones: list[MilestoneCreate]
 
 
+class EscrowConfirmRequest(BaseModel):
+    action: str = Field(min_length=3, max_length=24)
+    transaction_hash: str = Field(min_length=64, max_length=64)
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, value: str) -> str:
+        if value not in {"create", "accept", "fund", "approve", "release", "cancel", "dispute"}:
+            raise ValueError("unsupported escrow action")
+        return value
+
+
 class PaymentIntentCreate(BaseModel):
     milestone_id: str
     memo: str | None = Field(default=None, max_length=28)

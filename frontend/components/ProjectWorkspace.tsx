@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { splitMilestoneAmounts } from "@/lib/milestones";
+import { EscrowAction, signSubmitEscrow } from "@/lib/escrow";
 import { PaymentIntentDetails, signAndSubmitPayment } from "@/lib/stellar";
 import { Badge, EmptyState, Progress, SectionHeader, Skeleton, StatusBadge } from "./ui";
 
@@ -32,6 +33,7 @@ interface Agreement {
   id: string; status: string; amount: number; description: string; version: number;
   client_id: string; freelancer_id: string; client_accepted: boolean; freelancer_accepted: boolean;
   milestones: Milestone[]; active_dispute_id: string | null;
+  escrow_contract_id: string | null; escrow_agreement_id: string | null; escrow_status: string;
 }
 interface Invitation { id: string; project_id: string; status: string; expires_at: string }
 interface Activity { action: string; entity_type: string; details: string; actor_id: string; created_at: string }
@@ -126,6 +128,35 @@ export default function ProjectWorkspace({ projectId }: { projectId: string }) {
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Payment was not completed");
+    } finally { setBusy(false); }
+  }
+
+  async function runEscrow(action: EscrowAction) {
+    if (!agreement) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const params = await apiRequest<{
+        escrow_agreement_id: string; client: string; freelancer: string;
+        amounts_stroops: number[];
+      }>(`/api/agreements/${agreement.id}/escrow/intent`);
+      const source = isClient ? params.client : params.freelancer;
+      const hash = await signSubmitEscrow({
+        action,
+        agreementId: params.escrow_agreement_id,
+        source,
+        client: params.client,
+        freelancer: params.freelancer,
+        milestoneIndex: 0,
+        amountStroops: params.amounts_stroops[0],
+        fundedAmounts: params.amounts_stroops,
+      });
+      await apiRequest(`/api/agreements/${agreement.id}/escrow/confirm`, {
+        method: "POST", body: JSON.stringify({ action, transaction_hash: hash }),
+      });
+      setNotice(`Escrow ${action} verified on Testnet: ${hash.slice(0, 12)}…`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Escrow action failed");
     } finally { setBusy(false); }
   }
 
@@ -266,6 +297,24 @@ export default function ProjectWorkspace({ projectId }: { projectId: string }) {
                       </article>
                     )) : <EmptyState icon={<ClipboardCheck size={19} />} title="No milestones yet" description="Milestones appear once an agreement is created." />}
                   </div>
+                </div>
+              </section>
+            )}
+
+            {agreement && (
+              <section className="card">
+                <div className="cardHeader"><div><h2 className="cardTitle">Soroban escrow</h2><p className="cardSubtitle">Contract state is verified on Testnet before application state changes.</p></div><ShieldCheck size={17} /></div>
+                <div className="cardBody">
+                  <div className="badgeRow"><Badge tone={agreement.escrow_status === "not_initialized" ? "neutral" : "success"}>{agreement.escrow_status.replaceAll("_", " ")}</Badge><Badge tone="primary">{agreement.escrow_contract_id ? "Contract linked" : "Not linked"}</Badge></div>
+                  <div className="buttonRow">
+                    {isClient && agreement.escrow_status === "not_initialized" && <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void runEscrow("create")}>Initialize on-chain</button>}
+                    {!isClient && agreement.escrow_status === "initialized" && <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void runEscrow("accept")}>Accept on-chain</button>}
+                    {isClient && agreement.escrow_status === "accepted" && <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void runEscrow("fund")}>Fund escrow</button>}
+                    {isClient && agreement.escrow_status === "funded" && <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void runEscrow("approve")}>Approve release</button>}
+                    {isClient && agreement.escrow_status === "approved" && <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void runEscrow("release")}>Release from escrow</button>}
+                    {(agreement.client_id === me.id || agreement.freelancer_id === me.id) && !["not_initialized", "released", "cancelled"].includes(agreement.escrow_status) && <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void runEscrow("dispute")}>Open on-chain dispute</button>}
+                  </div>
+                  <p className="hint" style={{ marginTop: 12 }}>Requires a funded Freighter Testnet wallet. No private keys are requested. Escrow is separate from the direct-payment verification flow.</p>
                 </div>
               </section>
             )}

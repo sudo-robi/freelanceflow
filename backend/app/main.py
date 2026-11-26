@@ -55,7 +55,7 @@ from .schemas import (
     VerifyEmailRequest,
 )
 from .stellar import TESTNET_PASSPHRASE, get_network_passphrase, get_testnet_account, get_transaction
-from .routers import agreements, dashboard, disputes, finance, milestones, projects, stellar
+from .routers import agreements, dashboard, disputes, escrow, finance, milestones, projects, stellar
 
 logger = logging.getLogger("freelanceflow")
 app = FastAPI(title="FreelanceFlow API", version="0.3.0")
@@ -796,5 +796,6 @@ app.include_router(agreements.router)
 app.include_router(milestones.router)
 app.include_router(disputes.router)
 app.include_router(finance.router)
+app.include_router(escrow.router)
 app.include_router(dashboard.router)
 app.include_router(stellar.router)

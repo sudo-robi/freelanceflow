@@ -41,7 +41,13 @@ _ADDED_COLUMNS = {
         "completed_at": "DATETIME",
         "cancelled_at": "DATETIME",
     },
-    "work_agreements": {"version": "INTEGER DEFAULT 1"},
+    "work_agreements": {
+        "version": "INTEGER DEFAULT 1",
+        "escrow_agreement_id": "VARCHAR(64)",
+        "escrow_status": "VARCHAR(24) DEFAULT 'not_initialized'",
+        "escrow_transaction_hash": "VARCHAR(64)",
+        "escrow_updated_at": "DATETIME",
+    },
     "agreement_milestones": {
         "submission_count": "INTEGER DEFAULT 0",
         "submitted_at": "DATETIME",
@@ -131,6 +137,7 @@ def _add_missing_indexes(engine) -> None:
         "payment_intents": ["ix_intent_milestone_status"],
         "disputes": ["ix_dispute_agreement_status"],
         "payment_records": ["ix_payment_status_created"],
+        "work_agreements": ["ix_agreement_escrow_id"],
     }
     columns = {
         "ix_notification_user_read": ("notifications", "(user_id, read)"),
@@ -138,6 +145,7 @@ def _add_missing_indexes(engine) -> None:
         "ix_intent_milestone_status": ("payment_intents", "(milestone_id, status)"),
         "ix_dispute_agreement_status": ("disputes", "(agreement_id, status)"),
         "ix_payment_status_created": ("payment_records", "(status, created_at)"),
+        "ix_agreement_escrow_id": ("work_agreements", "(escrow_agreement_id)"),
     }
     tables = set(inspector.get_table_names())
     for table, names in wanted.items():
