@@ -10,7 +10,7 @@ afterEach(cleanup);
 describe("DashboardPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    api.apiRequest.mockResolvedValue({
+    const dashboard = {
       user: { id: "1", full_name: "Ada", role: "freelancer", email: "ada@example.com", stellar_address: null },
       projects: {
         total: 2,
@@ -32,7 +32,11 @@ describe("DashboardPage", () => {
       unread_notifications: 2,
       activity: [{ action: "confirmed", entity_type: "payment", entity_id: "pay1", details: "hash", created_at: "2026-11-24T00:00:00" }],
       generated_at: "2026-11-24T00:00:00",
-    });
+    };
+    const report = { by_month: { "2026-11": 100 }, verified_payments: 1, total_amount: 100 };
+    api.apiRequest.mockImplementation((path: string) =>
+      path === "/api/dashboard" ? Promise.resolve(dashboard) : Promise.resolve(report),
+    );
   });
 
   it("renders verified earnings instead of hardcoded placeholders", async () => {
