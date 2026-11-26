@@ -9,7 +9,7 @@ services:
     name: freelanceflow-api
     env: docker
     repo: https://github.com/sudo-robi/freelanceflow.git
-    branch: final-gap-closure
+    branch: main
     rootDir: backend
     dockerfilePath: Dockerfile
     envVars:
@@ -24,7 +24,7 @@ services:
     name: freelanceflow-web
     env: docker
     repo: https://github.com/sudo-robi/freelanceflow.git
-    branch: final-gap-closure
+    branch: main
     rootDir: frontend
     dockerfilePath: Dockerfile
     envVars:
