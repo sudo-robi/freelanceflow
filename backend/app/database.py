@@ -30,6 +30,7 @@ def get_db():
 # Columns added after the initial release. Applied idempotently so existing
 # SQLite/PostgreSQL databases can start with the current models.
 _ADDED_COLUMNS = {
+    "users": {"email_verified": "BOOLEAN DEFAULT 0"},
     "freelancer_profiles": {
         "skills": "TEXT DEFAULT ''",
         "available": "BOOLEAN DEFAULT 1",

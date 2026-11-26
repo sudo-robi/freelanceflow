@@ -52,6 +52,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20))
     full_name: Mapped[str] = mapped_column(String(255))
     stellar_address: Mapped[str | None] = mapped_column(String(56), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -287,6 +288,29 @@ class PortfolioItem(Base):
     url: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AccountToken(Base):
+    __tablename__ = "account_tokens"
+    __table_args__ = (Index("ix_account_token_user_kind", "user_id", "kind"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RateLimitCounter(Base):
+    __tablename__ = "rate_limit_counters"
+    __table_args__ = (Index("ix_rate_limit_window", "window_bucket"),)
+
+    scope: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    window_bucket: Mapped[int] = mapped_column(Integer, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, default=1)
 
 
 class Invoice(Base):

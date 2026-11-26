@@ -30,9 +30,23 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(max_length=255)
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=128)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
+
+
 class SessionResponse(BaseModel):
     token: str
     role: str
+    verification_token: str | None = None
 
 
 class ProjectCreate(BaseModel):

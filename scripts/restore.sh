@@ -9,6 +9,9 @@ if [ $# -ne 1 ]; then
 fi
 BACKUP_FILE="$1"
 [ -f "$BACKUP_FILE" ] || { echo "Backup file not found: $BACKUP_FILE" >&2; exit 1; }
+if [ -f "$BACKUP_FILE.sha256" ]; then
+  sha256sum -c "$BACKUP_FILE.sha256" || { echo "Backup integrity check failed" >&2; exit 1; }
+fi
 DATABASE_URL="${DATABASE_URL:-sqlite:///./freelanceflow.db}"
 
 case "$DATABASE_URL" in

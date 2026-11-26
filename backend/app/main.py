@@ -16,6 +16,10 @@ from .services import (
     assert_not_disputed,
     assert_transition,
     audit,
+    consume_account_token,
+    create_account_token,
+    dev_mode,
+    email_delivery_configured,
     is_stellar_address,
     lock_row,
     notify,
@@ -39,13 +43,16 @@ from .models import (
 )
 from .schemas import (
     AgreementCreate,
+    ForgotPasswordRequest,
     InvitationCreate,
     LoginRequest,
+    ResetPasswordRequest,
     MilestoneUpdate,
     ProjectCreate,
     ProfileUpdate,
     RegisterRequest,
     SessionResponse,
+    VerifyEmailRequest,
 )
 from .stellar import TESTNET_PASSPHRASE, get_network_passphrase, get_testnet_account, get_transaction
 from .routers import agreements, dashboard, disputes, finance, milestones, projects, stellar
@@ -131,8 +138,13 @@ def register(
         db.add(FreelancerProfile(user_id=user.id, title="Freelancer", description=""))
     else:
         db.add(ClientProfile(user_id=user.id, company_name="", description=""))
+    verification_token = create_account_token(db, user.id, "verify_email", lifetime_minutes=1440)
     db.commit()
-    return SessionResponse(token=create_session(db, user.id), role=user.role)
+    return SessionResponse(
+        token=create_session(db, user.id),
+        role=user.role,
+        verification_token=verification_token if dev_mode() else None,
+    )
 
 
 @app.post("/api/auth/login", response_model=SessionResponse)
@@ -175,6 +187,55 @@ def logout_all(user: User = Depends(get_current_user), db: Session = Depends(get
     return {"revoked": deleted}
 
 
+@app.post("/api/auth/verify-email")
+def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db), _limit: None = Depends(rate_limit("verify_email", 10, 60))):
+    user = consume_account_token(db, payload.token, "verify_email")
+    if not user:
+        raise HTTPException(status_code=400, detail="Verification token is invalid or expired")
+    user.email_verified = True
+    audit(db, user.id, "auth", user.id, "email_verified")
+    db.commit()
+    return {"status": "verified"}
+
+
+@app.post("/api/auth/resend-verification")
+def resend_verification(user: User = Depends(get_current_user), db: Session = Depends(get_db), _limit: None = Depends(rate_limit("resend_verification", 5, 300))):
+    token = create_account_token(db, user.id, "verify_email", lifetime_minutes=1440)
+    audit(db, user.id, "auth", user.id, "verification_resent")
+    db.commit()
+    response = {"status": "created", "email_delivery_configured": email_delivery_configured()}
+    if dev_mode():
+        response["verification_token"] = token
+    return response
+
+
+@app.post("/api/auth/forgot-password", status_code=202)
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db), _limit: None = Depends(rate_limit("forgot_password", 5, 300))):
+    user = db.query(User).filter(User.email == payload.email.lower()).first()
+    response = {"status": "accepted", "email_delivery_configured": email_delivery_configured()}
+    if user:
+        token = create_account_token(db, user.id, "reset_password", lifetime_minutes=60)
+        audit(db, user.id, "auth", user.id, "password_reset_requested")
+        db.commit()
+        if dev_mode():
+            response["reset_token"] = token
+    return response
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db), _limit: None = Depends(rate_limit("reset_password", 10, 60))):
+    from .models import Session as SessionModel
+
+    user = consume_account_token(db, payload.token, "reset_password")
+    if not user:
+        raise HTTPException(status_code=400, detail="Reset token is invalid or expired")
+    user.password_hash = hash_password(payload.password)
+    db.query(SessionModel).filter(SessionModel.user_id == user.id).delete()
+    audit(db, user.id, "auth", user.id, "password_reset_completed")
+    db.commit()
+    return {"status": "updated"}
+
+
 @app.get("/api/me")
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     profile = None
@@ -188,6 +249,7 @@ def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
         "full_name": user.full_name,
         "role": user.role,
         "stellar_address": user.stellar_address,
+        "email_verified": bool(user.email_verified),
         "profile": profile.__dict__ if profile else None,
     }
 
