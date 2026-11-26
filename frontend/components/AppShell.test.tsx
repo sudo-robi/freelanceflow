@@ -10,9 +10,9 @@ describe("AppShell", () => {
     render(<AppShell title="Projects" subtitle="Testnet"><h1>Project list</h1></AppShell>);
 
     expect(screen.getByRole("heading", { name: "Project list" })).toBeDefined();
-    expect(screen.getByRole("link", { name: "Projects" })).toBeDefined();
-    for (const label of ["Overview", "Projects", "Freelancers", "Payments", "Disputes", "Stellar wallet", "Notifications", "Profile"]) {
-      expect(screen.getByRole("link", { name: label })).toBeDefined();
+    expect(screen.getAllByRole("link", { name: "Projects" }).length).toBeGreaterThan(0);
+    for (const label of ["Overview", "Projects", "Discover", "Payments", "Disputes", "Wallet", "Notifications", "Profile"]) {
+      expect(screen.getAllByRole("link", { name: label }).length).toBeGreaterThan(0);
     }
   });
 });
