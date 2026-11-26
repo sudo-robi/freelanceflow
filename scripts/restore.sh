@@ -18,7 +18,7 @@ case "$DATABASE_URL" in
     pg_restore --clean --if-exists --no-owner --dbname "$DATABASE_URL" "$BACKUP_FILE"
     ;;
   sqlite:///*)
-    TARGET="${DATABASE_URL#sqlite://}"
+    TARGET="${DATABASE_URL#sqlite:///}"
     python3 - "$BACKUP_FILE" "$TARGET" <<'PY'
 import sqlite3, sys
 source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)

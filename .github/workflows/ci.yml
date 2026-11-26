@@ -50,8 +50,8 @@ jobs:
         run: npm ci
       - name: Unit tests
         run: npm test
-      - name: Type check
-        run: npx tsc --noEmit
+      - name: Lint / type gate
+        run: npm run lint
       - name: Production build
         run: npm run build
 
