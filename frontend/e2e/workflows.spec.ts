@@ -30,7 +30,8 @@ test("a client creates a real project and sees it in the dashboard", async ({ pa
   await authenticate(page, client);
 
   await page.goto("/projects");
-  await page.getByLabel("Project title").fill("E2E website project");
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.getByLabel("Title", { exact: true }).fill("E2E website project");
   await page.getByLabel("Description").fill("A complete project description for testing.");
   await page.getByLabel("Budget (XLM)").fill("120");
   await page.getByRole("button", { name: "Create project" }).click();
@@ -122,9 +123,9 @@ test("opening a dispute through the UI freezes the workflow", async ({ page, req
 
   await authenticate(page, client);
   await page.goto(`/projects/${project.id}`);
-  await page.getByLabel("Reason for dispute").fill("The delivered work does not match the agreed scope.");
+  await page.getByLabel("Reason", { exact: true }).fill("The delivered work does not match the agreed scope.");
   await page.getByRole("button", { name: "Open dispute" }).click();
 
-  await expect(page.getByText("An open dispute blocks approvals and payments.")).toBeVisible();
+  await expect(page.getByText("An open dispute blocks approvals and payments until resolved.")).toBeVisible();
   await expect(page.getByText("open", { exact: true })).toBeVisible();
 });
