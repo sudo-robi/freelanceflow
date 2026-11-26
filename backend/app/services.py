@@ -4,14 +4,18 @@ All writes are explicit and auditable. Notification and audit records are
 persisted in the same transaction as the business change that triggered them.
 """
 
+import hashlib
+import os
 import re
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .models import (
+    AccountToken,
     AgreementMilestone,
     AuditLog,
     Dispute,
@@ -75,6 +79,46 @@ def require_stellar_address(address: str | None, label: str) -> str:
     if not is_stellar_address(address):
         raise HTTPException(status_code=422, detail=f"{label} must be a valid Stellar public address")
     return address
+
+
+def dev_mode() -> bool:
+    """Local-only mode that returns verification tokens in API responses."""
+    return os.getenv("EMAIL_DEV_MODE", "false").strip().lower() == "true"
+
+
+def email_delivery_configured() -> bool:
+    return os.getenv("EMAIL_DELIVERY_CONFIGURED", "false").strip().lower() == "true"
+
+
+def create_account_token(db: Session, user_id: str, kind: str, lifetime_minutes: int = 60) -> str:
+    """Invalidate previous tokens of this kind, then create a hashed single-use token."""
+    db.query(AccountToken).filter(
+        AccountToken.user_id == user_id,
+        AccountToken.kind == kind,
+        AccountToken.used_at.is_(None),
+    ).delete()
+    raw = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw.encode()).hexdigest()
+    db.add(AccountToken(
+        user_id=user_id,
+        kind=kind,
+        token_hash=token_hash,
+        expires_at=datetime.utcnow() + timedelta(minutes=lifetime_minutes),
+    ))
+    return raw
+
+
+def consume_account_token(db: Session, raw_token: str, kind: str) -> User | None:
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    token = db.query(AccountToken).filter(
+        AccountToken.token_hash == token_hash,
+        AccountToken.kind == kind,
+        AccountToken.used_at.is_(None),
+    ).with_for_update().first()
+    if not token or token.expires_at < datetime.utcnow():
+        return None
+    token.used_at = datetime.utcnow()
+    return db.get(User, token.user_id)
 
 
 def require_client(user: User) -> None:
