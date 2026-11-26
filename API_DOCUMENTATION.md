@@ -7,6 +7,11 @@ Interactive FastAPI documentation is available at `/docs` when the backend runs.
 - `POST /api/auth/register` — creates user + role profile, returns session token.
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
+- `POST /api/auth/logout-all` — revoke all sessions for the current user
+- `POST /api/auth/verify-email` — single-use email verification token
+- `POST /api/auth/resend-verification` — authenticated resend
+- `POST /api/auth/forgot-password` — always 202; no account enumeration
+- `POST /api/auth/reset-password` — single-use token, revokes sessions
 - `GET /api/me` — account and role profile.
 - `PUT /api/me` — name, Stellar address, title, description, rates, skills.
 - `PUT /api/me/availability` — freelancer availability and note.

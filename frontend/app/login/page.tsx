@@ -48,6 +48,7 @@ export default function LoginPage() {
           {error && <div className="errorBox" role="alert">{error}</div>}
           <div className="field"><label className="label" htmlFor="email">Email</label><input className="input" id="email" name="email" type="email" autoComplete="email" required /></div>
           <div className="field"><label className="label" htmlFor="password">Password</label><input className="input" id="password" name="password" type="password" autoComplete="current-password" required /></div>
+          <p className="hint" style={{ textAlign: "right", marginTop: -8 }}><Link href="/forgot-password" style={{ color: "var(--primary)", fontWeight: 700 }}>Forgot password?</Link></p>
           <button className="btn btn-primary" style={{ width: "100%", marginTop: 10 }} disabled={loading}>{loading ? "Signing in…" : <>Sign in <ArrowRight size={16} /></>}</button>
           <p className="hint" style={{ textAlign: "center", marginTop: 22 }}>New here? <Link href="/register" style={{ color: "var(--primary)", fontWeight: 700 }}>Create an account</Link></p>
         </form>

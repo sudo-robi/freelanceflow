@@ -83,6 +83,7 @@ test("all workspace routes render without console errors or horizontal overflow"
   for (const path of [
     "/dashboard", "/projects", "/directory", "/wallet",
     "/payments", "/disputes", "/notifications", "/profile",
+    "/forgot-password", "/reset-password", "/verify-email",
   ]) {
     await page.goto(path);
     await expect(page.locator("main")).toBeVisible();

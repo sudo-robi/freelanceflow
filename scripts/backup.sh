@@ -31,3 +31,13 @@ PY
     exit 1
     ;;
 esac
+
+BACKUP_PATH="$BACKUP_DIR/freelanceflow-$STAMP."$(case "$DATABASE_URL" in postgres://*|postgresql://*) echo dump ;; *) echo db ;; esac)
+if [ -f "$BACKUP_PATH" ]; then
+  sha256sum "$BACKUP_PATH" > "$BACKUP_PATH.sha256"
+fi
+RETENTION="${BACKUP_RETENTION:-7}"
+mapfile -t OLD < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'freelanceflow-*' ! -name '*.sha256' -printf '%T@ %p\n' | sort -rn | tail -n +$((RETENTION + 1)) | cut -d' ' -f2-)
+for file in "${OLD[@]}"; do
+  rm -f "$file" "$file.sha256"
+done

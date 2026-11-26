@@ -72,4 +72,8 @@ DATABASE_URL=... ./scripts/restore.sh <file>
 
 Application dependencies are pinned exactly in `backend/pyproject.toml` and `frontend/package.json`, with `package-lock.json` providing deterministic frontend installs.
 
+Rate limiting defaults to the shared `database` backend so counters are consistent across workers and instances. Use `RATE_LIMIT_BACKEND=memory` only for local development. `RATE_LIMIT_FAIL_OPEN=true` keeps the app available if the counter table is unavailable; set it to `false` to fail closed. Proxy deployments must pass the real peer address or enforce limits at the edge — forwarded headers are never trusted as rate-limit keys.
+
+Account recovery creates hashed, single-use, expiring tokens but **does not send email** unless an external provider is configured (`EMAIL_DELIVERY_CONFIGURED=true` plus provider secrets in your deployment environment). `EMAIL_DEV_MODE=true` returns verification/reset tokens in API responses for local testing and must never be enabled in production.
+
 The Soroban escrow contract is deployed and verified on the configured network as `CA5FBQ4VEJ4ZXGVDVMAGRP6JKEB7AGUUG5ZR3NYSNG3A6XFUUVCL37CI` (WASM hash `906f98af2a1ae3bb8a816ea65bab35b130c3f4ab02d1ba40335a8ca1eb9b527a`). It is not currently invoked by the API; see SMART_CONTRACT_REVIEW.md for transaction evidence.
