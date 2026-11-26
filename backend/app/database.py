@@ -109,7 +109,7 @@ def _enforce_payment_integrity(engine) -> None:
     with engine.connect() as connection:
         duplicates = connection.execute(text(
             "SELECT milestone_id, COUNT(*) AS c FROM payment_records "
-            "WHERE status = 'confirmed' GROUP BY milestone_id HAVING c > 1"
+            "WHERE status = 'confirmed' GROUP BY milestone_id HAVING COUNT(*) > 1"
         )).all()
     if duplicates:
         raise RuntimeError(
