@@ -3,40 +3,53 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { apiRequest, setToken } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    const form = new FormData(event.currentTarget);
+    setLoading(true);
+    const data = new FormData(event.currentTarget);
     try {
       const result = await apiRequest<{ token: string }>("/api/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
+        body: JSON.stringify({ email: data.get("email"), password: data.get("password") }),
       });
       setToken(result.token);
       router.push("/dashboard");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Login failed");
+      setError(cause instanceof Error ? cause.message : "Sign in failed");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
     <main className="authShell">
-      <section className="authVisual"><Link className="brand" href="/"><span className="brandMark">F</span>FreelanceFlow</Link><h2>See the work.<br />Verify the payment.</h2></section>
+      <section className="authVisual">
+        <Link className="brand" href="/"><span className="brandMark">F</span>FreelanceFlow</Link>
+        <div>
+          <h2>A clearer way to work and get paid.</h2>
+          <p style={{ color: "#b8c0d8", maxWidth: 420 }}>Manage agreements, deliverables and verified Testnet payments in one focused workspace.</p>
+        </div>
+        <span style={{ color: "#8f9bb8", fontSize: 12 }}><ShieldCheck size={14} /> Independent payment verification</span>
+      </section>
       <section className="authPanel">
-        <form className="formCard" onSubmit={submit}>
+        <form className="authCard" onSubmit={(event) => void submit(event)}>
           <p className="eyebrow">Welcome back</p>
           <h1>Sign in.</h1>
-          {error && <div className="error" role="alert">{error}</div>}
-          <div className="field"><label htmlFor="email">Email</label><input id="email" name="email" type="email" required /></div>
-          <div className="field"><label htmlFor="password">Password</label><input id="password" name="password" type="password" required /></div>
-          <button className="button" style={{ width: "100%", marginTop: 10 }}>Sign in</button>
-          <p style={{ textAlign: "center", color: "var(--muted)", fontSize: 13 }}>New here? <Link href="/register" style={{ color: "var(--blue)", fontWeight: 800 }}>Create account</Link></p>
+          <p className="hint">Access your projects, agreements and payments.</p>
+          {error && <div className="errorBox" role="alert">{error}</div>}
+          <div className="field"><label className="label" htmlFor="email">Email</label><input className="input" id="email" name="email" type="email" autoComplete="email" required /></div>
+          <div className="field"><label className="label" htmlFor="password">Password</label><input className="input" id="password" name="password" type="password" autoComplete="current-password" required /></div>
+          <button className="btn btn-primary" style={{ width: "100%", marginTop: 10 }} disabled={loading}>{loading ? "Signing in…" : <>Sign in <ArrowRight size={16} /></>}</button>
+          <p className="hint" style={{ textAlign: "center", marginTop: 22 }}>New here? <Link href="/register" style={{ color: "var(--primary)", fontWeight: 700 }}>Create an account</Link></p>
         </form>
       </section>
     </main>
